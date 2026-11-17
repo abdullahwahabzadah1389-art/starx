@@ -1,0 +1,446 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+
+import { ENGINE_V } from './versions';
+
+const SW_FILE = '/9byt8m-v10.js';
+const OLD_SW_FILES = ['/9byt8m-v2.js', '/9byt8m-v3.js', '/9byt8m-v4.js', '/9byt8m-v5.js', '/9byt8m-v6.js', '/9byt8m-v7.js', '/9byt8m-v8.js', '/9byt8m-v9.js'];
+const SETTINGS_KEY = '10ednm8';
+const MAINTENANCE_KEY = 'vaulted-db-maintenance-2026-11';
+
+// Wisp relays are tried in order. Vercel cannot host a persistent WebSocket,
+// so there is no local /wisp/ endpoint — these are all public relays.
+//
+// PRIORITY_WISPS are the high-bandwidth hosts with the most reliable upgrades.
+// They get the first (short) race; the rest of FALLBACK_WISPS only get a turn if
+// none of them answers, so a slow or dead tail relay never delays a page load.
+const DEFAULT_WISP = 'wss://anura.pro/';
+const PRIORITY_WISPS = [
+  'wss://anura.pro/',
+  'wss://wisp.terbiumon.top/wisp/',
+  'wss://wisp.mercurywork.shop/',
+];
+const FALLBACK_WISPS = [
+  'wss://fern.best/wisp/',
+  'wss://lunaar.org/wisp/',
+  'wss://kristenblackburnvolleyballcamps.com/socket/',
+];
+
+function candidates() {
+  const fromEnv = (process.env.NEXT_PUBLIC_WISP_URL || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const priority = [...fromEnv, ...PRIORITY_WISPS];
+  const rest = FALLBACK_WISPS.filter((u) => !priority.includes(u));
+  return {
+    priority: [...new Set(priority)],
+    all: [...new Set([...priority, ...rest])],
+  };
+}
+
+// A relay is only usable if it answers a Wisp INFO packet. Opening the socket
+// alone is not enough: some hosts accept the upgrade and then drop the stream.
+// Each probe resolves with the round-trip time (ms) on success, or null.
+function probe(url, timeout) {
+  return new Promise((resolve) => {
+    let socket;
+    let done = false;
+    const started = performance.now();
+    const finish = (ms) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try {
+        socket && socket.close();
+      } catch {}
+      resolve(ms);
+    };
+    const timer = setTimeout(() => finish(null), timeout);
+    try {
+      socket = new WebSocket(url);
+    } catch {
+      return finish(null);
+    }
+    socket.binaryType = 'arraybuffer';
+    socket.onopen = () => {
+      // Wisp INFO packet: type 0x01, stream id 0, JSON payload.
+      const payload = new TextEncoder().encode('{"streamId":0}');
+      const packet = new Uint8Array(5 + payload.length);
+      packet[0] = 0x01;
+      packet.set(payload, 5);
+      try {
+        socket.send(packet);
+      } catch {
+        finish(null);
+      }
+    };
+    socket.onmessage = (event) => {
+      const data = event.data;
+      const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : null;
+      // 0x03 = INFO reply. Anything else means the relay is not speaking Wisp.
+      finish(bytes && bytes.length > 0 && bytes[0] === 0x03 ? performance.now() - started : null);
+    };
+    socket.onerror = () => finish(null);
+    socket.onclose = () => finish(null);
+  });
+}
+
+// Race a group of relays and keep whichever answers the INFO packet first.
+// Resolves with the winning URL, or null when nobody answered within `budget`.
+// Losers are closed as soon as a winner is claimed, so a slow or dead relay
+// never delays boot.
+function raceWisp(urls, budget) {
+  return new Promise((resolve) => {
+    if (!urls.length) return resolve(null);
+    let settled = false;
+    const timers = [];
+    const done = (url) => {
+      if (settled) return;
+      settled = true;
+      timers.forEach(clearTimeout);
+      resolve(url);
+    };
+    timers.push(setTimeout(() => done(null), budget));
+    urls.forEach((url) => {
+      probe(url, budget)
+        .then((ms) => {
+          if (ms == null || settled) return;
+          console.info(`[wisp] ${url} answered in ${Math.round(ms)}ms`);
+          done(url);
+        })
+        .catch(() => {});
+    });
+  });
+}
+
+// Priority-then-fallback relay selection: the high-bandwidth hosts get a short
+// race first, and the slower tail is only contacted when that race comes up
+// empty. The overall boot budget stays bounded (~2.5s + ~3s worst case) and in
+// the normal case the loser sockets are closed within a few hundred ms.
+async function pickWisp(priorityBudget = 2500, fallbackBudget = 3000) {
+  const { priority, all } = candidates();
+  if (!all.length) return DEFAULT_WISP;
+
+  const fast = await raceWisp(priority, priorityBudget);
+  if (fast) return fast;
+
+  const rest = all.filter((u) => !priority.includes(u));
+  const slow = await raceWisp(rest, fallbackBudget);
+  if (slow) return slow;
+
+  // Nothing answered (offline / all relays down): hand the bundle the default so
+  // it can retry on its own instead of blocking boot forever.
+  return all[0] || DEFAULT_WISP;
+}
+
+// Drop the previous service worker + its caches so a stale worker can never
+// keep serving the old proxy build.
+async function resetServiceWorkers() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(
+      regs.map((reg) => {
+        const script = (reg.active || reg.waiting || reg.installing || {}).scriptURL || '';
+        const stale = OLD_SW_FILES.some((f) => script.endsWith(f));
+        return stale ? reg.unregister() : null;
+      }),
+    );
+  } catch {}
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k.startsWith('cherri-shell')).map((k) => caches.delete(k)));
+  } catch {}
+}
+
+const CSS = [['/assets/vaulted-home-logo.css?v=v1.2.0-20261108-r13']];
+const JS = [
+  // Must load first: the engine bundle's embedded libcurl transport calls into
+  // starxBricks for header normalization on every outgoing request.
+  `/starx-bricks.js?v=${ENGINE_V}`,
+  `/cfvi4/szst2w-20261020.js?v=${ENGINE_V}`,
+  `/6m9rd/ybnwpk.js?v=${ENGINE_V}`,
+  '/assets/berri-supabase-accounts.js?v=v1.2.0-20261108-r13',
+  '/assets/apps-catalog.js',
+  `/assets/bundle-vaulted-home-apps-20261029.js?v=${ENGINE_V}`,
+  '/assets/berri-live-presence.js',
+];
+
+function addLink(href) {
+  if (document.querySelector(`link[data-vaulted-css="${href}"]`)) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = href;
+  link.dataset.vaultedCss = href;
+  document.head.appendChild(link);
+}
+
+function addScript(src) {
+  return new Promise((resolve) => {
+    if (document.querySelector(`script[data-vaulted-js="${src}"]`)) return resolve();
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = false;
+    s.dataset.vaultedJs = src;
+    s.onload = () => resolve();
+    s.onerror = () => resolve(); // keep going; the boot screen reports failures
+    document.head.appendChild(s);
+  });
+}
+
+// StarX pages that have a real path on the shell site. next.config.js rewrites
+// /settings etc. to "/" so a hard refresh does not 404 on Vercel; this maps the
+// path back onto the internal tab so the refresh lands where the user was.
+const ROUTED_PAGES = [
+  ['/g', 'g'],
+  ['/games', 'g'],
+  ['/cloaks', 'cloaks'],
+  ['/extensions', 'extensions'],
+  ['/settings', 'settings'],
+  ['/apps', 'apps'],
+  ['/chat', 'chat'],
+  ['/music', 'music'],
+  ['/profile', 'profile'],
+  ['/members', 'members'],
+  ['/leaderboard', 'leaderboard'],
+  ['/changelog', 'changelog'],
+  ['/notes', 'notes'],
+  ['/tools', 'tools'],
+  ['/emu', 'emu'],
+  ['/mod', 'mod'],
+  ['/activity', 'activity'],
+  ['/achievements', 'achievements'],
+  ['/compat', 'compat'],
+  ['/l', 'launcher'],
+  ['/embed', 'embed'],
+  ['/shop', 'shop'],
+  ['/admin', 'admin'],
+  ['/assistant', 'assistant'],
+];
+
+// Injected documents ask the shell to open a link in a real StarX tab. This is
+// the fallback for popups the engine's own plugin misses (synthetic clicks,
+// keyboard activation, links created by a framework), which otherwise open a
+// bare browser window on the rewritten proxy URL and come up blank.
+function installOpenProxied() {
+  if (window.__starxOpenProxied) return;
+  window.__starxOpenProxied = (href) => {
+    try {
+      const u = new URL(String(href), window.location.href);
+      if (!/^https?:$/i.test(u.protocol)) return false;
+      const open = window.__cherriOpenTab;
+      if (typeof open !== 'function') return false;
+      open(u.href);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+// CloudMoon streams play over a WebRTC peer connection whose signalling and
+// media set-up do not survive the rewriting proxy: the page signs in, is given
+// a server and joins the room, but the offer never completes and the stream tab
+// ends with "Unable to Join Game / Connection failed". The same site works in a
+// normal browser, so send these hosts to a real tab instead of the proxy. The
+// list is the same one the service worker exempts from ad blocking.
+const DIRECT_HOSTS = /(^|\.)(cloudmoonapp\.com|cloudmoon\.net|nenly\.cn|viewoncloud\.com|cloudbatata\.com|geometry\.today|nowgg\.fun|now\.gg)$/i;
+
+function isDirectHost(href) {
+  try {
+    return DIRECT_HOSTS.test(new URL(String(href), window.location.href).hostname);
+  } catch {
+    return false;
+  }
+}
+
+// The shell publishes its tab opener on window and swaps it on remount, so trap
+// the property itself: whatever function gets assigned comes back wrapped and
+// CloudMoon-style URLs leave the proxy as a genuine browser tab.
+function installDirectBypass() {
+  // CloudMoon stays inside the proxy: no tab bypass. The list is kept because
+  // the service worker exempts the same hosts from ad blocking.
+}
+
+function openRoutedPage() {
+  const path = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
+  const hit = ROUTED_PAGES.find(([p]) => path === p || path.startsWith(p + '/'));
+  if (!hit) return;
+  const target = 'starx://' + hit[1];
+  // The bundle exposes its tab opener once the shell has mounted.
+  let tries = 0;
+  const attempt = () => {
+    const open = window.__cherriOpenTab;
+    if (typeof open === 'function') {
+      try {
+        open(target);
+      } catch {}
+      // Keep the URL clean so a later refresh still resolves, but do not leave
+      // the user staring at /settings while the tab bar says Home.
+      try {
+        window.history.replaceState(window.history.state, '', '/');
+      } catch {}
+      return;
+    }
+    if (tries++ < 40) setTimeout(attempt, 150);
+  };
+  attempt();
+}
+
+export default function Loader() {
+  const [showNotice, setShowNotice] = useState(false);
+  const [swBlocked, setSwBlocked] = useState(false);
+
+  useEffect(() => {
+    // Wisp relay for BareMux / Epoxy. Set NEXT_PUBLIC_WISP_URL on Vercel.
+    // There is no local /wisp/ endpoint: Vercel cannot host persistent WebSockets.
+    // The bundle reads this global when it defines its relay list, so it must be
+    // set before the bundle script loads.
+    window.__WISP_URL__ = DEFAULT_WISP;
+    installDirectBypass();
+    installOpenProxied();
+
+    try {
+      if (!localStorage.getItem(MAINTENANCE_KEY)) setShowNotice(true);
+    } catch {
+      setShowNotice(true);
+    }
+
+    CSS.forEach(([href]) => addLink(href));
+
+    // Consume the <link rel=preload> hints from layout.js right away: append the
+    // engine script now (the transport picks the global up later) and warm the
+    // two wasm binaries into the HTTP cache. Without an actual matching request
+    // the preloads are wasted and Chrome logs "preloaded but not used".
+    (() => {
+      if (document.querySelector('script[data-starx-engine]')) return;
+      const s = document.createElement('script');
+      // Versioned, because /libcurl/* is served immutable for a year: an
+      // untagged URL would keep serving a stale engine to returning visitors.
+      s.src = `/libcurl/index.js?v=${ENGINE_V}`;
+      s.async = true;
+      s.dataset.starxEngine = '1';
+      document.head.appendChild(s);
+      ['/libcurl/libcurl.wasm', '/cfvi4/ses5q6.wasm'].forEach((u) => {
+        fetch(u, { cache: 'force-cache' }).catch(() => {});
+      });
+    })();
+
+    let cancelled = false;
+    (async () => {
+      await resetServiceWorkers();
+      if ('serviceWorker' in navigator) {
+        try {
+          await navigator.serviceWorker.register(SW_FILE, { updateViaCache: 'none' });
+        } catch (err) {
+          console.error('[sw] registration failed:', err);
+          // Browsing through the proxy needs the worker: it is what rewrites
+          // pages and relays their requests. Some static hosts forbid workers
+          // outright (a `worker-src 'none'` policy), and the shell would then sit
+          // on "connecting…" forever with nothing to explain it.
+          setSwBlocked(true);
+        }
+      }
+      // Verify the relay actually answers a Wisp INFO packet before booting,
+      // and fall back to the next relay when it is down.
+      const wisp = await pickWisp();
+      window.__WISP_URL__ = wisp;
+      // The transport reads this ordered list when it needs to fail over. The
+      // working relay goes first so failover only ever moves to a relay that
+      // already answered a probe during this boot.
+      const { all: relayList } = candidates();
+      window.__STARX_WISPS__ = [wisp, ...relayList.filter((u) => u !== wisp)];
+      // Force the libcurl transport and the working relay into saved settings,
+      // so an old "epoxy" value or a dead relay can never win.
+      try {
+        const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+        saved.wisp = wisp;
+        saved.transport = 'libcurl';
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(saved));
+      } catch {}
+      console.info('[wisp] using', wisp, '· transport libcurl');
+      for (const src of JS) {
+        if (cancelled) return;
+        await addScript(src);
+      }
+      if (!cancelled) openRoutedPage();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dismiss = () => {
+    setShowNotice(false);
+    document.documentElement.classList.remove('vaulted-show-maintenance');
+    try {
+      localStorage.setItem(MAINTENANCE_KEY, 'dismissed');
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (!showNotice) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') dismiss();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showNotice]);
+
+  return (
+    <>
+      <main id="_jig29al">
+        <div className="vaulted-boot">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/starx-logo.png" alt="" aria-hidden="true" />
+          <div className="vaulted-boot-bar">
+            <div />
+          </div>
+          <span>{swBlocked ? 'StarX — proxy unavailable here' : 'StarX — connecting…'}</span>
+          {swBlocked && (
+            <p style={{ maxWidth: '32rem', margin: '0.75rem auto 0', fontSize: '0.8125rem', lineHeight: 1.5, opacity: 0.75, textAlign: 'center' }}>
+              This copy is served from a static host that blocks service workers, so pages cannot be proxied here. Run
+              StarX from its own domain to browse through it.
+            </p>
+          )}
+        </div>
+      </main>
+
+      {showNotice && (
+        <section id="vaulted-db-maintenance" role="dialog" aria-modal="true" style={{ display: 'grid' }}>
+          <div className="maintenance-card">
+            <button className="maintenance-close" type="button" aria-label="Dismiss maintenance notice" onClick={dismiss}>
+              ×
+            </button>
+            <div className="maintenance-icon" aria-hidden="true">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <ellipse cx="12" cy="5" rx="8" ry="3" />
+                <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+                <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+                <path d="M9 8.5c.9.45 1.9.7 3 .7s2.1-.25 3-.7" />
+              </svg>
+            </div>
+            <h1>StarX database maintenance</h1>
+            <p>
+              The StarX database is currently undergoing maintenance. Services may be limited or unavailable during
+              this time.
+            </p>
+            <div className="maintenance-deadline">
+              <span aria-hidden="true">◷</span>
+              <span>We expect it to be fixed by the start of December at the latest.</span>
+            </div>
+            <p className="maintenance-availability">
+              <strong>You can still use StarX:</strong> the proxy browser and cloaks remain available.
+            </p>
+            <button className="maintenance-continue" type="button" onClick={dismiss}>
+              Continue to StarX
+            </button>
+          </div>
+        </section>
+      )}
+    </>
+  );
+}

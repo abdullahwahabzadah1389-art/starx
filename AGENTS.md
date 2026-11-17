@@ -1,0 +1,280 @@
+# Project notes
+
+freecode reads this file before every change. Add anything it should always remember about this project.
+
+## What this is
+A Next.js (App Router) port of the `studygeometry.cfd/b` "vaulted" browser proxy.
+Only the proxy browser, Cloaks and Extensions remain; Forge AI, Games, Apps, account
+login, shop, chat, members, leaderboard, changelog, notes and tools were removed.
+
+## CloudMoon game streaming (solved)
+CloudMoon signs in, registers `client_register`, then receives the WebRTC `offer`
+as a socket frame. The offer is multi-KB, spans several TLS records, and the
+vendored libcurl WASM demuxes TCP reads into WebSocket frames itself, so it
+mis-frames the message: the offer arrives cut in half and the peer connection
+never completes ("Unable to Join Game / Connection failed"). A plain browser
+`new WebSocket` to the same coordinator host works fine (verified from inside a
+proxied frame).
+
+Fix: at the top of `connect(...)` in `public/libcurl/index.js`, if the target
+host matches `/cloudmoonapp\.com|cloudmoon\.net|nenly\.cn|viewoncloud\.com|cloudbatata\.com$/`,
+hand the socket to the browser's native `WebSocket` and forward
+onopen/onmessage/onclose/onerror; everything else keeps the relay path. Bump
+`ENGINE_V` after editing, since `/libcurl/*` is served immutable. Treat this host
+list as the same list as `STARX_ADBLOCK_EXEMPT` / `STARX_DENY_EXEMPT`.
+
+Do **not** diagnose this with `wss://ws.postman-echo.com/raw`: it caps replies at
+16384 bytes on both the proxied and direct path, which looks like a proxy
+truncation bug but is the echo service. CloudMoon itself is fine with >64 KB frames.
+
+Games shelf: `public/games/index.html` + `public/games/catalog.json`
+(235 entries, covers inlined as base64). `Roblox ( Cloud Moon )` sits right after
+`Roblox` and points at `https://web.cloudmoonapp.com/game/com.roblox.client/`.
+
+## Custom domain
+The domain must point at a host that allows service workers (`worker-src`), because
+the worker is what rewrites proxied pages. The freecode static share host forbids
+them, so a share link plus a custom domain still cannot proxy. Deploy the normal
+(non-static) build to Vercel, then Project → Settings → Domains → add the domain and
+point its DNS at Vercel (apex A record `76.76.21.21`, or a `CNAME` to
+`cname.vercel-dns.com` for `www`). Vercel issues the TLS certificate automatically.
+Any Node host with static hosting + no worker restrictions works the same way if it
+serves the `STATIC_EXPORT=1` output.
+
+## Static (share) build
+`STATIC_EXPORT=1 npx next build` writes a plain static copy to `out/` (adds
+`output: 'export'`, and skips rewrites/headers because export cannot apply them).
+StarX's proxy is entirely client-side, so this copy needs no server — but the
+**public static host forbids service workers** (`worker-src 'none'`), and the
+worker is what rewrites pages, so proxying cannot work from that host. The shell
+now detects the failed registration and says "proxy unavailable here" instead of
+sitting on "connecting…" forever. Delete `out/` afterwards: it is 18 MB and the
+workspace save limit is 20 MB.
+
+## Run
+`npm install && npm run dev` (preview service `freecode-preview`, port 3000).
+`npm run build` must pass before deploying. No `server.js` — Vercel cannot host
+persistent WebSockets, so the Wisp relay is always external.
+
+## Layout
+- `app/page.js` + `app/Loader.js` — page shell. Loader registers the service worker,
+  probes the Wisp relay, sets `window.__WISP_URL__`, then injects the engine scripts
+  in order. `app/globals.css` holds the maintenance modal + boot splash styles.
+- `public/assets/bundle-vaulted-home-apps-20261029.js` — the 6.3 MB engine bundle.
+  All feature edits live here.
+- `public/assets/vaulted-home-logo.css` — main stylesheet.
+- `public/9byt8m-v10.js` — service worker (libcurl bridge, SRI/CSP stripping, ad blocking).
+- `public/cfvi4/ses5q6.wasm` + `public/cfvi4/szst2w.js` — the **rewriter engine**.
+  These were missing from the first mirror and caused every proxied page to fail
+  with "rewriter wasm does not have wasm magic". Do not delete them.
+- `public/6m9rd/*.js` — client-side rewriter helpers.
+- `public/assets/apps-catalog.js`, `app-icons/`, `json/xander.json` — still loaded by
+  the bundle but inert now; kept to avoid 404s.
+
+## Bundle patches (search for these strings)
+- Route table `UoA` / `gc`: only `home`, `cloaks`, `settings`, `extensions`, `embed`,
+  `launcher`, `compat`, `achievements`, `reset`, `emu`, `profile/view`, `admin` remain.
+- Top nav second group is `["settings","cloaks","extensions",...(adminVisible?["admin"]:[]),"profile"]`
+  (around offset 6299300) — this is what pins Cloaks/Extensions next to Settings.
+- `DV` (wisp relay list) → `[(typeof window<"u"&&window.__WISP_URL__)||"wss://wisp.mercurywork.shop/"]`.
+  `fV(A)` opens `new WebSocket(A || DV[0])` with an 8s timeout.
+- `piA()` → `async function piA(A){return!0}`. It used to gate the proxy behind `/api/ping`,
+  which is CORS-blocked from every origin (also on the live site), so the gate is bypassed.
+- `J_()` and the home form default bare domains to **https://** (not http://).
+- `Je` (internal tab navigation) skips `nB(T)` when the tab is already internal, so the
+  pane container is not detached. Without this, Cloaks/Extensions rendered off-screen.
+- Drawer state is `[Q,C]=useState(!1)` (closed); Cloaks/Extensions are reachable from the
+  top nav, so the drawer does not need a forced-open patch.
+
+## Gotchas
+- The app mounts into a **closed** shadow root on `main#_jig29al`. Inspect only via CDP
+  `DOM.getDocument {pierce:true}`; `document.querySelector` cannot see inside it.
+- Home URL input: `placeholder="Search the web or enter a URL"`. To drive it in tests, set
+  the value with the native `HTMLInputElement.prototype.value` setter, dispatch `input`,
+  then call `form.requestSubmit()`. Mouse clicks and `DOM.focus` do not work.
+- Maintenance modal key `vaulted-db-maintenance-2026-11`, dismissed via `.maintenance-continue`.
+- Settings live in localStorage under key `10ednm8`. The loader rewrites its `wisp` field to
+  the relay that answered the probe, so a stale saved URL cannot win.
+- Supabase presence/announcement calls (`hulovfywovcxwprxdnoa.supabase.co`) and
+  `kristenblackburnvolleyballcamps.com/api/*` fail with CORS on every origin. Harmless.
+- Proxied pages are served under `/<random>/<random>/<random>/<base64url-of-target>`.
+- Some sites (YouTube, Twitch) reset HTTP/2 for the proxy's TLS fingerprint. The service
+  worker now returns a readable "Proxy error" page instead of a raw 500 for those.
+
+## Branding: StarX (by Sm0ke)
+- The product is now **StarX**, credited **by Sm0ke** in the copy. Branding lives in:
+  `app/layout.js` (metadata), `app/Loader.js` (boot splash + maintenance modal),
+  `public/assets/bundle-*.js` (home wordmark, footer, settings, notes, legal, error
+  strings), `public/assets/vaulted-{notes,tools,admin}.html`, and `public/9byt8m-v10.js`
+  (notification fallback title).
+- Do **not** rename these identifiers — they are wiring, not UI text:
+  `vaulted://` scheme, `vaulted-*` CSS class names, `localStorage` keys (`10ednm8`,
+  `cherri_*`), `window.__VAULTED_APPS__`, `cherri-shell-v10` cache name, and the
+  `vaulted-*.html` / `bundle-vaulted-*.js` / `vault.svg` file names.
+- The home wordmark is `children:"StarX"`. There is deliberately **no** byline
+  directly under it (it was removed as a duplicate); the only "by Sm0ke" credit is
+  the bottom footer `className:"home-credit"`, `children:"StarX · by Sm0ke"`.
+
+## Internal URL scheme (important)
+- Internal pages are addressed as `<scheme>://<page>` and also as a bare path
+  `vaulted/settings`. The parser lives in the bundle:
+  `LoA=/^(?:vaulted:\/\/|vaulted\/|starx:\/\/|starx\/|cherri:\/\/|fern:\/\/)/i`
+  and `pB="vaulted/"` builds those paths.
+- A naive "replace every vaulted with StarX" **breaks the proxy**: inside a regex
+  literal `vaulted\/` becomes `StarX\/`, so `vaulted/settings` no longer matches,
+  the nav treats it as an external URL, and every internal page falls through to
+  the Brave search fallback. Never brand-replace inside `LoA`, `pB`, or
+  `/^vaulted\//` — those are routing identifiers.
+- Display form: the URL bar shows `starx://settings` etc. via
+  `PI.url.replace(/^vaulted\//i,"starx://")`. Both `starx://` and `vaulted://`
+  (and `vaulted/`, `starx/`) are accepted on input.
+- Verify with `tmp/schemetest.js`: `starx://cloaks`, `starx://extensions`,
+  `vaulted://settings`, `starx://home` must each render their own heading and must
+  not hit `search.brave.com`.
+
+## Tab strip visibility
+- The tab strip and the `+` row used to hard-hide whenever the active page was
+  home: `style:{display:PI?.isInternal&&["home","h"].includes(...)?"none":void 0}`.
+  That blanked the strip the moment `+` created a home tab, so all tabs vanished
+  until you navigated somewhere. Both occurrences are now gated on `H.length<=1`,
+  i.e. the strip is hidden only for a single pristine home tab and always shows
+  once there are 2+ tabs.
+- A new tab is created in `$I` with `title:"New Tab"` and `url:"vaulted/home"`
+  (`isInternal`, `internalPath:"home"`). Two later writers used to overwrite that
+  title with `Home`: the route reporter `z.report` (`QI.label`) and `Je`. Both now
+  keep `"New Tab"` while the tab is on home and its current title is `"New Tab"`.
+- Regression test: `tmp/tabtest.js` clicks `+` three times on the home screen and
+  asserts the strip stays `display:flex` with 2/3/4 tabs all labelled `New Tab`.
+
+## Logo / favicon
+- `public/starx-logo.png` (512×512, transparent) is the sunglasses-cat sticker,
+  cut from the Redbubble flat artwork with a border flood-fill on near-black
+  pixels, then trimmed to the largest opaque component and padded square.
+- Used in three places: home wordmark (`.home-logo-mark`), the nav brand image
+  (`.vaulted-nav-brand`), and the boot splash. Metadata `icons` in
+  `app/layout.js` points every favicon rel at `/starx-logo.png`.
+- The theme CSS used to do `filter: brightness(0) invert(1)` on the home logo for
+  the *heaven* theme; that is removed because it would flatten the photo artwork
+  to a white blob.
+
+## Speed / compatibility pass (2026-11)
+- `devIndicators: false` in `next.config.js` removes the dev "Issues" badge.
+- Relay selection (`pickWisp` in `app/Loader.js`) races **all** candidates at
+  once and keeps whichever answers the Wisp INFO packet (0x03) first, logging
+  `[wisp] <url> answered in Nms`. Total budget 4s, then falls back to the first
+  candidate. Never go back to sequential probing: it added up to 30s of boot.
+- `app/layout.js` preloads `/libcurl/index.js` (as=script) and *prefetches* the
+  two wasm blobs. Use prefetch for wasm: libcurl.js fetches it with
+  `credentials:"same-origin"`, which a preload can't match, so a preload only
+  produces "preloaded but not used" warnings.
+- Ad/tracker blocking exists at **two** layers, both keyed on the base64url
+  target segment of the proxied URL:
+  1. `public/9byt8m-v10.js` — global `starxIsBlocked`/`starxBlockedResponse`,
+     204 short-circuit before `_ebvd0bt.route`. Helpers MUST be on `self`: the
+     fetch listener lives in a different closure than the controller loader.
+  2. `public/6m9rd/ybnwpk.js` — `starxDenyHref(rawUrl)` in the Controller
+     `methods.request`, because requests issued from inside the proxied page
+     bypass the SW listener and would otherwise throw
+     "SSL connect error" inside libcurl.
+- Proxied responses have `content-security-policy`, `x-frame-options`,
+  `strict-transport-security`, `permissions-policy`, `origin-agent-cluster`
+  stripped in the SW.
+- `window.open` in a normal (non-embed) tab previously escaped the proxy: the
+  popup tap plugin (`qP`) was only installed on embed/game frames. It is now
+  added to every tab frame (`createFrame(... new (Hk(),qP)(url => XG.emit(url)))`).
+  The tap also handles `about:blank`/empty-URL popups by returning a stand-in
+  window whose `location` writes become StarX tabs (the classic OAuth
+  pre-open-then-navigate pattern).
+- `SW_FILE` is `/9byt8m-v10.js`, caches `cherri-shell-v10`; v2–v9 are
+  unregistered on boot (see "Service worker" below).
+- **Cache busting matters more than it looks.** `/assets/*`, `/libcurl/*` and
+  `/cfvi4/*` are served `immutable, max-age=31536000`, so editing one of those
+  files in place does *not* reach an existing browser: the old copy is reused
+  for a year. Every entry in `JS` in `app/Loader.js` carries a `?v=` tag — bump
+  that tag whenever you touch an engine file, or the change will appear to have
+  no effect in an already-used profile.
+- **Outgoing request headers are normalized in `public/starx-bricks.js`**, which
+  loads *first* in `JS`. Every proxied page runs on the proxy origin, so the
+  browser stamps `Origin`/`Referer` with that origin and calls same-origin
+  traffic `cross-site`; Google, Roblox and ChatGPT reject that with 401/403.
+  `starxBricks.normalizeRequestHeaders` rewrites both headers to the target's
+  own origin, recomputes `Sec-Fetch-Site`, and removes `Headless` from
+  `User-Agent`/`Sec-Ch-Ua`. It is called from two places:
+  1. `public/libcurl/index.js` — `CurlSession.fetch` is the last stop before the
+     request reaches the wire, so this is the one function every proxied request
+     crosses. `starxResolveProxyTarget` decodes the base64url target segment
+     back out of the proxy URL first.
+  2. the engine bundle's own embedded transport (`async request(A,g,I,B,e)` in
+     `bundle-vaulted-*.js`), which is a *separate copy* of the libcurl client.
+- **Every proxied request is retried, then failed over to another relay.**
+  `CurlSession.fetch` in `public/libcurl/index.js` wraps `request_async` in
+  `starxRequestWithRetry`, because the relay's egress performs the TLS handshake
+  and some relays cannot negotiate TLS with certain CDNs (TikTok returns
+  `Request failed with error code 35: SSL connect error`). The wrapper retries a
+  connection-level failure (codes 7/16/18/28/35/52/55/56/92, "SSL connect
+  error", "Could not connect to server", dropped socket) once on the same relay,
+  then calls `starxFailoverRelay()`, which repoints libcurl at the next relay in
+  `window.__STARX_WISPS__`, closes the sockets still bound to the old relay, and
+  persists the new relay to `localStorage['10ednm8']`. 502/503/504 responses are
+  retried the same way. `AbortError` is never retried.
+  `app/Loader.js` sets `window.__STARX_WISPS__` right after `pickWisp()`, with
+  the relay that won the probe first.
+- **The service worker retries before it paints the error page.**
+  `R()` in the worker awaits `starxSwRequest`, which makes up to 3 attempts and
+  only then builds the "Proxy error" HTML. Previously the RPC rejected (it has
+  its own timeout) while the page-side retry was still running, so the error page
+  flashed and was replaced seconds later by the real document. Between attempts
+  the worker posts `$starxRotateRelay` to open pages, which calls
+  `window.starxRotateRelay()` in `public/libcurl/index.js` to move to the next
+  relay. Requests with a `ReadableStream` body are not replayed (a stream can
+  only be transferred once), so those still surface the error immediately.
+- **Popup/`_blank` handling has a guard fallback.** The engine's popup plugin
+  catches ordinary clicks, but a synthetic click (`el.click()`, keyboard
+  activation, framework-generated anchors) can slip past it; the browser then
+  opens a real window on the rewritten proxy URL, which is not a StarX route, so
+  it renders blank. `STARX_GUARD_JS` in the worker now intercepts click/auxclick
+  for `a[href]` with `target=_blank` and calls `window.__starxOpenProxied`
+  (installed by `app/Loader.js`), which opens a real StarX tab via
+  `__cherriOpenTab`.
+- **Never assign one prototype's method to another.** The SRI guard wrapped
+  `Element.prototype.append`, then assigned that same function to
+  `Document.prototype.append` and `DocumentFragment.prototype.append`. Each has
+  its own brand check, so React's hydration threw `TypeError: Illegal invocation`
+  and Brave Search died. Wrap each prototype with its own original method.
+- **Version tags come from `app/versions.js` (`ENGINE_V`)**, used by both
+  `app/layout.js` (preload) and `app/Loader.js` (script tags). `/libcurl/*` is
+  served `immutable` for a year, so the engine script itself must be requested
+  with the same `?v=` as the preload or returning visitors keep a stale engine.
+- **When testing headers, do not call `fetch()` on an absolute URL from inside
+  the proxied frame.** The rewriter leaves the native `fetch` in place for
+  absolute URLs, so the request goes straight to the target and bypasses the
+  proxy entirely — the resulting headers look "wrong" but were never proxied.
+  Navigate to `httpbin.org/headers` instead and read the rendered JSON.
+- **SRI/nonce stripping happens in three layers**, because each sees traffic the
+  others don't:
+  1. SW `public/9byt8m-v10.js` — `starxStripSecurityAttrs` rewrites the HTML body
+     textually (script/link `integrity`+`nonce`, CSP `<meta>`), then injects a
+     guard `<script data-starx-guard>` right after `<head>`. The guard blocks the
+     attributes at every DOM entry point (`setAttribute*`, prototype setters,
+     `document.write`, `innerHTML`/`outerHTML`/`insertAdjacentHTML`, and
+     pre-insertion sweeps in `appendChild`/`insertBefore`/`append`/`prepend`/
+     `before`/`after`/`cloneNode`/`adoptNode`/`importNode`).
+  2. Controller `public/6m9rd/ybnwpk.js` — `starxMaybeStripHtml` wraps the
+     `fetchHandler.handleFetch` result in `methods.request`. Needed because the
+     rewriter re-fetches documents through the controller and `document.write`s
+     them, so the parser sees the original hash before any guard can run.
+     Header-less responses are HTML-sniffed so nothing slips through.
+     Never drain a `ReadableStream` body just to sniff it: the stream is
+     one-shot, and a locked stream posted across the transport port throws
+     `DataCloneError` and breaks streaming apps (this hit ChatGPT).
+  3. The injected DOM guard (above) covers runtime-created tags.
+- **Relay selection is two-tier.** `PRIORITY_WISPS` (`NEXT_PUBLIC_WISP_URL`,
+  `anura.pro`, `wisp.terbiumon.top`, `wisp.mercurywork.shop`) race first with a
+  2500 ms budget; `FALLBACK_WISPS` (`fern.best`, `lunaar.org`,
+  `kristenblackburnvolleyballcamps.com`) only get a 3000 ms race if none of the
+  fast hosts answers. Measured boot: ~1123–1215 ms, `anura.pro` answering in
+  59 ms, `mercurywork` in 68 ms.
+- Verified live: `https://discord.com/login` renders the real React app
+  (1 email + 1 password input, submit, 2 canvas, 5 QR blocks, 359 stylesheets,
+  0 `[integrity]` elements), and a `wss://gateway.discord.gg/?v=10&encoding=json`
+  socket opened from inside the proxied frame returns `op=10` HELLO.
