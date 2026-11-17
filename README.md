@@ -30,7 +30,7 @@ npm run build && npm start
 
 ## Deploying to Vercel
 
-1. Push the repo and import it at Vercel — framework preset **Next.js**, no build
+1. Push the repo (it lives at https://github.com/abdullahwahabzadah1389-art/starx) and import it at Vercel — framework preset **Next.js**, no build
    or output overrides needed.
 2. Set the environment variable **`NEXT_PUBLIC_WISP_URL`** (Project → Settings →
    Environment Variables), e.g. `wss://anura.pro/`. See `.env.example`.
