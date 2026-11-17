@@ -31,6 +31,13 @@ Games shelf: `public/games/index.html` + `public/games/catalog.json`
 (235 entries, covers inlined as base64). `Roblox ( Cloud Moon )` sits right after
 `Roblox` and points at `https://web.cloudmoonapp.com/game/com.roblox.client/`.
 
+## Dependency security
+Vercel refuses to deploy a known-vulnerable Next.js. Keep `next` on the newest
+patched release of its line (**15.5.29** as of Nov 2026 — `15.5.4` was blocked).
+`overrides` in `package.json` pin `postcss` 8.5.33 and `sharp` 0.35.5, which are
+transitive deps of Next with advisories of their own; `npm audit` must report
+0 vulnerabilities. Re-run `npm audit` after any dependency change.
+
 ## Custom domain
 The domain must point at a host that allows service workers (`worker-src`), because
 the worker is what rewrites proxied pages. The freecode static share host forbids

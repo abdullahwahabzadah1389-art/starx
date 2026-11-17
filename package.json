@@ -10,10 +10,14 @@
   },
   "dependencies": {
     "@mercuryworkshop/libcurl-transport": "^2.0.6",
-    "next": "15.5.4",
+    "next": "15.5.29",
     "react": "19.1.1",
     "react-dom": "19.1.1"
   },
   "description": "StarX - an encrypted web proxy by Sm0ke.",
-  "author": "Sm0ke"
+  "author": "Sm0ke",
+  "overrides": {
+    "postcss": "8.5.33",
+    "sharp": "0.35.5"
+  }
 }

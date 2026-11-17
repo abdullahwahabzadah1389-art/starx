@@ -30,6 +30,9 @@ npm run build && npm start
 
 ## Deploying to Vercel
 
+Requires Next.js **15.5.29** or newer on the 15.5 line: Vercel blocks deploys of
+Next versions with known vulnerabilities (15.5.4 was rejected). `npm audit` is clean.
+
 1. Push the repo (it lives at https://github.com/abdullahwahabzadah1389-art/starx) and import it at Vercel — framework preset **Next.js**, no build
    or output overrides needed.
 2. Set the environment variable **`NEXT_PUBLIC_WISP_URL`** (Project → Settings →
