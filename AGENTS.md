@@ -340,3 +340,11 @@ persistent WebSockets, so the Wisp relay is always external.
   (1 email + 1 password input, submit, 2 canvas, 5 QR blocks, 359 stylesheets,
   0 `[integrity]` elements), and a `wss://gateway.discord.gg/?v=10&encoding=json`
   socket opened from inside the proxied frame returns `op=10` HELLO.
+
+## Shareable overview page
+`site/` is a standalone static landing page (no build step) published through the
+publish tool. It exists because the static share host sends
+`worker-src 'none'`, so the real proxy cannot run there; the page explains the
+project and points at the Vercel route. Keep it in sync when user-facing facts
+change (game count, which sites work). The live proxy itself deploys from the repo
+root via Vercel — do not add `site/` to the Next.js build.
