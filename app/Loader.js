@@ -391,6 +391,63 @@ export default function Loader() {
     return () => document.removeEventListener('keydown', onKey);
   }, [showNotice]);
 
+  // Fullscreen toggle for the whole StarX window.
+  //
+  // The proxy's own browser chrome lives in a closed shadow root inside the
+  // engine bundle, so a button cannot be injected into its toolbar. A floating
+  // control in the shell works the same regardless of what the chrome renders,
+  // and it can be reached with F11/Shift+F11-free keyboard too (Alt+Shift+F).
+  const [isFull, setIsFull] = useState(false);
+  const [showFull, setShowFull] = useState(false);
+
+  function toggleFullscreen() {
+    const el = document.documentElement;
+    if (document.fullscreenElement) {
+      const p = document.exitFullscreen && document.exitFullscreen();
+      if (p && p.catch) p.catch(() => {});
+      return;
+    }
+    const req =
+      el.requestFullscreen ||
+      el.webkitRequestFullscreen ||
+      el.mozRequestFullScreen ||
+      el.msRequestFullscreen;
+    if (req) {
+      const p = req.call(el, { navigationUI: 'hide' });
+      if (p && p.catch) {
+        p.catch(() => {
+          // Some embedded contexts refuse fullscreen outright; say so instead of
+          // leaving the user wondering why nothing happened.
+          try {
+            setShowFull(true);
+            setTimeout(() => setShowFull(false), 3500);
+          } catch {}
+        });
+      }
+    }
+  }
+
+  useEffect(() => {
+    const sync = () => {
+      const on = Boolean(document.fullscreenElement);
+      setIsFull(on);
+      document.documentElement.classList.toggle('starx-fullscreen', on);
+    };
+    const onKey = (e) => {
+      if (e.altKey && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault();
+        toggleFullscreen();
+      }
+    };
+    document.addEventListener('fullscreenchange', sync);
+    document.addEventListener('keydown', onKey);
+    sync();
+    return () => {
+      document.removeEventListener('fullscreenchange', sync);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, []);
+
   return (
     <>
       <main id="_jig29al">
@@ -441,6 +498,39 @@ export default function Loader() {
             </button>
           </div>
         </section>
+      )}
+
+      <button
+        type="button"
+        className="starx-fullscreen-btn"
+        onClick={toggleFullscreen}
+        aria-label={isFull ? 'Exit fullscreen' : 'Enter fullscreen'}
+        aria-pressed={isFull}
+        title={isFull ? 'Exit fullscreen (Alt+Shift+F)' : 'Fullscreen (Alt+Shift+F)'}
+        data-on={isFull ? '1' : '0'}
+      >
+        {isFull ? (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9 3H5a2 2 0 0 0-2 2v4" />
+            <path d="M15 3h4a2 2 0 0 1 2 2v4" />
+            <path d="M9 21H5a2 2 0 0 1-2-2v-4" />
+            <path d="M15 21h4a2 2 0 0 0 2-2v-4" />
+          </svg>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 9V5a2 2 0 0 1 2-2h4" />
+            <path d="M21 9V5a2 2 0 0 0-2-2h-4" />
+            <path d="M3 15v4a2 2 0 0 0 2 2h4" />
+            <path d="M21 15v4a2 2 0 0 1-2 2h-4" />
+          </svg>
+        )}
+        <span className="starx-fullscreen-label">{isFull ? 'Exit fullscreen' : 'Fullscreen'}</span>
+      </button>
+
+      {showFull && (
+        <p className="starx-fullscreen-note" role="status">
+          Fullscreen was blocked here — this page is running inside a frame that does not allow it.
+        </p>
       )}
     </>
   );

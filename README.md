@@ -152,6 +152,14 @@ Bare hostnames and domains default to **https://** — both in the home search f
 and in the in-browser URL bar (`J_()` in the bundle). Existing `http://` URLs are
 left alone.
 
+## Fullscreen
+
+There is a **Fullscreen** button in the bottom-right corner of StarX that makes
+the whole browser fill the screen. Click it again (or press **Alt+Shift+F**, or
+Esc) to leave. On a phone it shrinks to a small icon. If the page is embedded
+somewhere that forbids fullscreen, a short note says so instead of nothing
+happening.
+
 ## Notes on sites
 
 TikTok, Gemini, Discord, Twitch, Google, GitHub, Wikipedia, YouTube, Instagram,
@@ -190,7 +198,7 @@ real browsers, and while plain jsDelivr works it refuses the larger asset repos.
 app/page.js          page shell
 app/layout.js        StarX metadata (title, description, icon)
 app/Loader.js        boots the service worker + engine scripts, relay probing
-app/globals.css      maintenance modal + boot splash styles
+app/globals.css      maintenance modal, boot splash, fullscreen button
 public/assets/       engine bundle, styles, fonts, icons, notes/tools pages
 public/cfvi4/        rewriter js + wasm
 public/6m9rd/        client js

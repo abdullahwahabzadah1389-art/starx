@@ -143,6 +143,21 @@ workspace save limit is 20 MB.
 `npm run build` must pass before deploying. No `server.js` — Vercel cannot host
 persistent WebSockets, so the Wisp relay is always external.
 
+## Fullscreen control
+- A floating **Fullscreen** button lives in the app shell, not in the engine
+  bundle: the proxy renders its own browser chrome inside a *closed* shadow root,
+  so nothing can be injected into its toolbar. The button is rendered by
+  `app/Loader.js` (`.starx-fullscreen-btn`) and styled in `app/globals.css`.
+- It toggles `document.documentElement.requestFullscreen()` /
+  `exitFullscreen()`, and **Alt+Shift+F** does the same. The label switches to
+  "Exit fullscreen" and `data-on="1"` is set while active.
+- `fullscreenchange` is the source of truth (so browser- or Esc-initiated exits
+  keep the label correct); state is not guessed from the click.
+- Some embedding contexts refuse fullscreen. The rejection is caught and a short
+  "Fullscreen was blocked here" note appears rather than silently doing nothing.
+- Under 640px the label is hidden and the button becomes a 40px circle, still
+  inside the viewport with no horizontal overflow.
+
 ## Layout
 - `app/page.js` + `app/Loader.js` — page shell. Loader registers the service worker,
   probes the Wisp relay, sets `window.__WISP_URL__`, then injects the engine scripts
