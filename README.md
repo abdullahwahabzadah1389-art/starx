@@ -166,6 +166,18 @@ failed" on the first attempt; retrying works. **x.com returns HTTP 403 from ever
 egress IPs, so it is an upstream block, not a code bug. Fixing it needs a relay
 with non-blocked egress.
 
+All 235 games on the shelf were checked link by link and then opened through the
+proxy. About 25 had dead links and were repointed to working copies instead of
+being dropped, so every card now loads: Vex 3/7, Eggy Car, Amaze! and Cookie
+Clicker come from GameDistribution, and the rest (Drift Hunters, Smash Karts,
+Yohoho, Fireboy and Watergirl, Temple Run 2, Cluster Rush, Pool, Papa's Taco Mia,
+Burrito Bison, Bloxorz, Basketball Stars, Rocket League 2D, Dino Game, Watermelon
+Game, TNT Sandbox, Angry Birds) from GitHub asset mirrors. Minecraft 1.3 and 1.5.2
+are now **Minecraft (Eaglercraft 1.5.2)** and **(EaglercraftX 1.8)**, which are
+fully playable in the browser. GitHub-hosted games load through
+`cdn.jsdmirror.com`: `raw.githack.com` shows an "External Content Notice" page to
+real browsers, and while plain jsDelivr works it refuses the larger asset repos.
+
 ## Layout
 
 ```

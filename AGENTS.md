@@ -57,6 +57,35 @@ Games shelf: `public/games/index.html` + `public/games/catalog.json`
 (235 entries, covers inlined as base64). `Roblox ( Cloud Moon )` sits right after
 `Roblox` and points at `https://web.cloudmoonapp.com/game/com.roblox.client/`.
 
+### Link health (checked game by game, Nov 2026)
+Every entry was fetched directly and then opened through the proxy. Two findings
+that are easy to re-break:
+
+1. **`raw.githack.com` / `rawcdn.githack.com` are unusable for the shelf.** A real
+   browser page load gets an "External Content Notice" interstitial instead of the
+   file (curl does not, which is why a link can look fine in a shell test). All
+   GitHub-hosted entries now go through `cdn.jsdmirror.com/gh/<owner>/<repo>@<branch>/<path>`,
+   which serves the raw file with no notice and no 50 MB repo cap (plain
+   `cdn.jsdelivr.net` rejects these repos for size).
+2. **Those CDNs serve `.html` as `text/plain` + `nosniff`,** so a game renders as
+   source code. `starxFinalizeResponse` in `public/9byt8m-v10.js` therefore sniffs a
+   200 response whose body starts with `<!doctype html`/`<html` and re-serves it as
+   `text/html`. It sniffs the *body*, not the URL: by then the URL is the proxy
+   route with the target base64-encoded. Keep that in mind before "simplifying" it.
+
+Dead links were replaced rather than removed: GameDistribution slugs
+(`https://html5.gamedistribution.com/<32-hex-id>/`) for Vex 3/7, Eggy Car, Amaze!
+and Cookie Clicker; jsdmirror asset repos for the rest (Drift Hunters, Smash Karts,
+Yohoho, Fireboy and Watergirl, Temple Run 2, Cluster Rush, Pool, Papa's Taco Mia,
+Burrito Bison, Bloxorz, Basketball Stars, Rocket League 2D, Dino Game, Watermelon
+Game, TNT Sandbox, Angry Birds). Minecraft 1.3/1.5.2 became
+**Minecraft (Eaglercraft 1.5.2)** and **(EaglercraftX 1.8)**, which are real
+playable Minecraft builds.
+
+Some sites answer HTTP 403 to a plain fetch (Cloudflare "Just a moment…") but work
+fine in the proxy — BasketBros and Pizza Tower both did. Test those in a browser
+before calling them dead.
+
 ## Dependency security
 Vercel refuses to deploy a known-vulnerable Next.js. Keep `next` on the newest
 patched release of its line (**15.5.29** as of Nov 2026 — `15.5.4` was blocked).

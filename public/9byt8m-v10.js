@@ -128,10 +128,10 @@ async function starxAdBlockExempt(req,event){
 }
 // Wrap a proxy route result with the response finaliser, tolerating both
 // promise and plain-Response return values.
-function starxFinalizeResult(p){
+function starxFinalizeResult(p,url){
   try{
     return Promise.resolve(p).then(function(r){
-      try{ return starxFinalizeResponse({body:r.body,status:r.status,statusText:r.statusText},r.headers); }
+      try{ return starxFinalizeResponse({body:r.body,status:r.status,statusText:r.statusText,url:url},r.headers); }
       catch(e){ return r; }
     });
   }catch(e){ return p; }
@@ -152,7 +152,9 @@ function starxRouteResult(o,exempt){
   var r=null;
   try{ if(typeof _ebvd0bt!=="undefined"&&_ebvd0bt.shouldRoute(target)) r=_ebvd0bt.route(target); }catch(e){}
   if(!r){ try{ if(typeof _yta30ly!=="undefined"&&_yta30ly.shouldRoute(target)) r=_yta30ly.route(target); }catch(e){} }
-  return r?starxFinalizeResult(r):null;
+  var u="";
+  try{ u=target&&target.request&&target.request.url?target.request.url:""; }catch(e){}
+  return r?starxFinalizeResult(r,u):null;
 }
 
 
@@ -346,6 +348,33 @@ function starxNormalizeRequestHeaders(pairs,rawUrl){
 async function starxFinalizeResponse(x,headers){
   var ct=starxHeaderGet(headers,"content-type").toLowerCase();
   var isHtml=ct.indexOf("text/html")===0&&x.status===200&&x.body!=null;
+  // CDNs that mirror GitHub (jsDelivr and friends) serve .html files as
+  // text/plain with X-Content-Type-Options: nosniff, so a game loaded from one
+  // renders as source code instead of running. These responses arrive inside a
+  // proxied frame, where a document is parsed as HTML anyway, so upgrade the
+  // type when the body is plainly an HTML document. Detection is on the body
+  // rather than the URL: the request URL here is the proxy route, and the real
+  // target is base64-encoded in its last path segment.
+  var looksTextual=ct.indexOf("text/html")===0||ct.indexOf("text/plain")===0||ct.indexOf("text/txt")===0||ct.indexOf("application/octet-stream")===0||ct==="";
+  if(!isHtml&&x.status===200&&x.body!=null&&looksTextual){
+    try{
+      var sniff="";
+      if(typeof x.body==="string") sniff=x.body.slice(0,400);
+      else if(x.body&&typeof x.body.getReader==="function"){
+        var rd=x.body.getReader();
+        var chunk=await rd.read();
+        if(!chunk.done&&chunk.value) sniff=new TextDecoder("utf-8").decode(chunk.value.slice(0,400));
+        var rest=chunk.done?[]:[chunk.value];
+        var parts=rest.slice();
+        // Rebuild a stream that replays what was read, then continues.
+        x={body:new ReadableStream({start:function(c){parts.forEach(function(p){if(p)c.enqueue(p)});function pump(){return rd.read().then(function(r2){if(r2.done)c.close();else{c.enqueue(r2.value);return pump()}})}pump().catch(function(e){try{c.error(e)}catch(e2){}})}}),status:x.status,statusText:x.statusText};
+      }
+      var head=String(sniff).replace(/^\uFEFF/,"").replace(/^\s+/,"").toLowerCase();
+      if(head.indexOf("<!doctype html")===0||head.indexOf("<html")===0||head.indexOf("<!--")===0&&head.indexOf("<html")>0){
+        isHtml=true;
+      }
+    }catch(e){}
+  }
   if(!isHtml) return new Response(x.body,{status:x.status,statusText:x.statusText,headers:headers});
   try{
     var text=typeof x.body==="string"?x.body:await new Response(x.body).text();
