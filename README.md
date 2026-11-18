@@ -157,7 +157,10 @@ left alone.
 TikTok, Gemini, Discord, Twitch, Google, GitHub, Wikipedia and YouTube all render
 in the proxy. CloudMoon cloud gaming (`web.cloudmoonapp.com`) also plays inside the
 proxy: its signalling socket is handed to the browser's native WebSocket because the
-libcurl WASM transport mis-frames the multi-KB WebRTC offer. It is on the Games
+libcurl WASM transport mis-frames the multi-KB WebRTC offer. Its launcher also needs
+`newWindowLaunch=false` and a default `selectedServer`, which the injected guard seeds
+inside the proxied page (it retries, because the proxy's per-site storage only exists
+after the page boots). It is on the Games
 shelf as **Roblox ( Cloud Moon )**. CloudMoon occasionally answers "Connection
 failed" on the first attempt; retrying works. **x.com returns HTTP 403 from every public relay** — X blocks those
 egress IPs, so it is an upstream block, not a code bug. Fixing it needs a relay

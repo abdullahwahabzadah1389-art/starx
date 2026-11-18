@@ -264,6 +264,7 @@ function installDirectBypass() {
   // the service worker exempts the same hosts from ad blocking.
 }
 
+
 function openRoutedPage() {
   const path = (window.location.pathname || '/').replace(/\/+$/, '') || '/';
   const hit = ROUTED_PAGES.find(([p]) => path === p || path.startsWith(p + '/'));

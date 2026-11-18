@@ -27,6 +27,32 @@ Do **not** diagnose this with `wss://ws.postman-echo.com/raw`: it caps replies a
 16384 bytes on both the proxied and direct path, which looks like a proxy
 truncation bug but is the echo service. CloudMoon itself is fine with >64 KB frames.
 
+### Second failure: the launcher, not the socket (solved)
+With the socket fix in place, Play still failed with the generic "Failed to
+connect to game server". Two separate throws in CloudMoon's launcher both get
+caught and reported as that same dialog:
+
+1. `selectedServer` is `null`/`0` ("Select Server") → it throws.
+2. `newWindowLaunch !== "false"` makes it do `window.open("about:blank")` and then
+   `popup.location.href = ...`. The proxy's popup has no usable `location`, so that
+   throws `TypeError: Cannot set properties of undefined (setting 'href')`.
+
+Setting `newWindowLaunch=false` + `selectedServer=23` in the *proxied frame's*
+localStorage makes Roblox launch and stream (video 1280x720, playing).
+
+**Timing is the trap.** The seeding block in `STARX_GUARD_JS`
+(`public/9byt8m-v10.js`) runs at the top of `<head>`, but the proxy installs its
+per-site storage shim *after* that, so a write at document start lands in the
+shell's storage — CloudMoon never sees it. (Writes from `app/Loader.js` have the
+same problem: they hit the shell origin.) So the block seeds once immediately and
+then again on `DOMContentLoaded`, on `load`, on every capture-phase `click`, and on
+a ~16 s interval, by which point the frame's real store exists. Verified with a
+`getItem` trace: the values are present at Play time and the stream connects.
+
+Validate any edit to the injected script with `node tmp/checkguard.js` (it joins
+the array and `new Function()`s it, printing `PARSE OK`). A broken join silently
+disables the entire guard *and* the SRI stripping — never ship without that check.
+
 Games shelf: `public/games/index.html` + `public/games/catalog.json`
 (235 entries, covers inlined as base64). `Roblox ( Cloud Moon )` sits right after
 `Roblox` and points at `https://web.cloudmoonapp.com/game/com.roblox.client/`.
