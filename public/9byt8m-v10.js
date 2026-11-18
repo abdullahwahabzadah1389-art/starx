@@ -259,6 +259,70 @@ var STARX_GUARD_JS=[
  // case where the real Window.open still exists (guard ran before the engine).
  "try{var wopen=window.open;if(typeof wopen==='function'&&!wopen.__starx){var wrapped=function(u,n,f){try{if(u&&sxNav(String(u)))return null}catch(e){}return wopen.call(window,u,n,f)};wrapped.__starx=1;try{window.open=wrapped}catch(e){}} }catch(e){}",
  "}catch(e){}",
+ // Gemini's module loader re-reads the .src of its own bootstrap script
+ // (<script id="base-js">) and asserts it still looks like `.../_/js/k=...`.
+ // Under the proxy that URL is a base64-encoded route, the assertion fails, and
+ // the app throws before rendering anything (the "Fa" error with an empty body).
+ // Report the original upstream URL for that single element so the check passes;
+ // every other script keeps the real proxy URL it needs to load.
+ "try{",
+ "var d0=Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype,'src');",
+ "if(d0&&d0.get&&!HTMLScriptElement.prototype.__starxSrcFix){",
+ "var sdec=function(u){try{",
+ "var m=String(u).match(/([A-Za-z0-9_-]{40,})\\/?(?:[?#].*)?$/);if(!m)return '';",
+ "var b=m[1].replace(/-/g,'+').replace(/_/g,'/');while(b.length%4)b+='=';",
+ "var t=decodeURIComponent(escape(atob(b)));",
+ "return /^https?:\\/\\//i.test(t)&&/google\\.com|gstatic\\.com/i.test(t)?t:''",
+ "}catch(e){return ''}};",
+ "Object.defineProperty(HTMLScriptElement.prototype,'src',{configurable:true,",
+ "get:function(){var v=d0.get.call(this);try{if(this.id==='base-js'){var o=sdec(v);if(o)return o}}catch(e2){}return v},",
+ "set:function(x){try{if(d0.set)d0.set.call(this,x);else this.setAttribute('src',x)}catch(e3){}}});",
+ "HTMLScriptElement.prototype.__starxSrcFix=1;",
+ "}",
+ "}catch(e){}",
+ // The engine installs a *per-element* own `src` property on rewritten
+ // scripts, which shadows the prototype getter above. Re-define it on the
+ // Gemini bootstrap element itself, and keep re-applying briefly in case the
+ // engine rewrites the element after we run.
+ "try{",
+ "var d1=Object.getOwnPropertyDescriptor(Element.prototype,'getAttribute');",
+ "var fixEl=function(el){",
+ "try{",
+ "if(!el||el.__starxBaseJsFix)return el;",
+ "var raw=d1&&d1.call?d1.call(el,'src'):el.getAttribute('src');",
+ "var m=String(raw||'').match(/([A-Za-z0-9_-]{40,})\\/?(?:[?#].*)?$/);",
+ "if(!m)return el;",
+ "var b=m[1].replace(/-/g,'+').replace(/_/g,'/');while(b.length%4)b+='=';",
+ "var orig=decodeURIComponent(escape(atob(b)));",
+ "if(!/^https?:\\/\\//i.test(orig))return el;",
+ "Object.defineProperty(el,'src',{configurable:true,enumerable:true,",
+ "get:function(){return orig},",
+ "set:function(){}});",
+ "el.__starxBaseJsFix=1;",
+ "}catch(e4){}",
+ "return el",
+ "};",
+ "var fixBaseJs=function(){",
+ "try{var el=document.getElementById('base-js');if(el)fixEl(el)}catch(e5){}",
+ "};",
+ // Gemini reads the element's src the instant its bundle executes, which can be
+ // before DOMContentLoaded. Hand it the patched element at the moment it asks.
+ "try{",
+ "var gid=Document.prototype.getElementById;",
+ "if(gid&&!Document.prototype.__starxGidFix){",
+ "Document.prototype.getElementById=function(id){",
+ "var el=gid.call(this,id);",
+ "if(id==='base-js')return fixEl(el);",
+ "return el",
+ "};",
+ "Document.prototype.__starxGidFix=1;",
+ "}",
+ "}catch(e6){}",
+ "fixBaseJs();",
+ "document.addEventListener('DOMContentLoaded',fixBaseJs);",
+ "window.addEventListener('load',fixBaseJs);",
+ "for(var bi=0;bi<20;bi++)setTimeout(fixBaseJs,bi*500);",
+ "}catch(e){}",
  "start();",
  "})();"
 ].join("");
@@ -273,10 +337,39 @@ function starxStripSecurityAttrs(html){
   // <link rel=preload integrity>. Put it immediately after <head> (never before
   // <!doctype>, which would drop the document into quirks mode); fall back to
   // after <html>, then to the very front of the document.
+  // The rewriter may already have injected a guard (this function can run more
+  // than once on the same document). Drop any existing copy first so the page
+  // does not end up executing the guard twice.
+  out=out.replace(/<script data-starx-guard>[\s\S]*?<\/script>/gi,"");
   var tag="<script data-starx-guard>"+STARX_GUARD_JS+"</script>";
-  if(/<head[^>]*>/i.test(out)) return out.replace(/<head[^>]*>/i,function(m){return m+tag});
-  if(/<html[^>]*>/i.test(out)) return out.replace(/<html[^>]*>/i,function(m){return m+tag});
-  return tag+out;
+  if(/<head[^>]*>/i.test(out)) out=out.replace(/<head[^>]*>/i,function(m){return m+tag});
+  else if(/<html[^>]*>/i.test(out)) out=out.replace(/<html[^>]*>/i,function(m){return m+tag});
+  else out=tag+out;
+  return starxFixDoctype(out);
+}
+
+// Force the doctype back to the very front of the document.
+//
+// The proxy's HTML rewriter prepends its own bootstrap <script> tags to the
+// document root, i.e. *above* <!doctype html>. The HTML parser then ignores the
+// doctype, the document loads in quirks mode (document.compatMode ===
+// "BackCompat"), and sites that check for that refuse to boot. Gemini is the
+// clearest example: it logs "detected quirky document structure parsing" and
+// throws before rendering, leaving an empty body.
+//
+// Moving the doctype to the front fixes the mode without changing behaviour:
+// content that preceded <html> is hoisted by the parser into the start of
+// <head>, so those scripts still run first and in the same order.
+function starxFixDoctype(html){
+  try{
+    var m=/^(\uFEFF?[ \t\r\n]*)([\s\S]*)$/.exec(html);
+    var lead=m?m[1]:"", rest=m?m[2]:html;
+    if(/^<!doctype/i.test(rest)) return html;
+    var dt=rest.match(/<!doctype[^>]*>/i);
+    if(dt) rest=dt[0]+rest.replace(dt[0],"");
+    else rest="<!doctype html>"+rest;
+    return lead+rest;
+  }catch(e){ return html; }
 }
 
 function starxHeaderGet(headers,name){

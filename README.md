@@ -154,8 +154,14 @@ left alone.
 
 ## Notes on sites
 
-TikTok, Gemini, Discord, Twitch, Google, GitHub, Wikipedia and YouTube all render
-in the proxy. CloudMoon cloud gaming (`web.cloudmoonapp.com`) also plays inside the
+TikTok, Gemini, Discord, Twitch, Google, GitHub, Wikipedia, YouTube, Instagram,
+ChatGPT and Claude all render in the proxy. Gemini needed two fixes: a doctype
+that had drifted behind the rewriter's bootstrap scripts (which put the page in
+quirks mode, where Gemini refuses to start) and a loader-URL check of its own,
+which the proxy's rewritten script address failed. That includes the app itself
+loading with its chat box and sidebar, checked repeatedly.
+
+CloudMoon cloud gaming (`web.cloudmoonapp.com`) also plays inside the
 proxy: its signalling socket is handed to the browser's native WebSocket because the
 libcurl WASM transport mis-frames the multi-KB WebRTC offer. Its launcher also needs
 `newWindowLaunch=false` and a default `selectedServer`, which the injected guard seeds

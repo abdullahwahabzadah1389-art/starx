@@ -86,6 +86,31 @@ Some sites answer HTTP 403 to a plain fetch (Cloudflare "Just a moment…") but 
 fine in the proxy — BasketBros and Pizza Tower both did. Test those in a browser
 before calling them dead.
 
+## Gemini (and the quirks-mode / jsUrl trap)
+
+Gemini used to load with a correct title but an empty body and no input box. Two
+independent bugs, both fixed in `public/9byt8m-v10.js`:
+
+1. **Doctype ended up after scripts.** The HTML rewriter prepends its own
+   bootstrap `<script>` tags to the document root, i.e. above `<!doctype html>`.
+   A doctype that is not the first thing in the document is ignored, so the page
+   loads in quirks mode (`document.compatMode === "BackCompat"`) and Gemini
+   refuses to boot. `starxFixDoctype()` now hoists the doctype back to the front;
+   content that preceded `<html>` is still hoisted by the parser into the start of
+   `<head>`, so those scripts keep running first and in order. `starxStripSecurityAttrs`
+   also de-dupes `data-starx-guard` now (it could run twice on one document).
+2. **Gemini validates its own loader URL.** Its bundle reads `.src` of
+   `<script id="base-js">` and throws `Error: Fa` unless that URL still matches
+   `/_/js/…k=…`. Under the proxy it is a base64 route, so the check failed.
+   The guard patches `document.getElementById` so that element reports the
+   decoded upstream URL for `.src` (and ignores writes). It must be handed over
+   *at the moment Gemini asks* — patching later is too late, and the engine also
+   installs a per-element own `src` property that shadows a prototype getter.
+
+Verify with real UI text, not just `document.title`: Gemini is working when
+`document.compatMode === "CSS1Compat"` and there are 3 `textarea`/`contenteditable`
+matches plus text like "Hi, I'm Gemini".
+
 ## Dependency security
 Vercel refuses to deploy a known-vulnerable Next.js. Keep `next` on the newest
 patched release of its line (**15.5.29** as of Nov 2026 — `15.5.4` was blocked).
