@@ -186,6 +186,21 @@ persistent WebSockets, so the Wisp relay is always external.
 - Needs Chrome/Edge 113+ with a real GPU (or a machine where WebGPU is enabled).
   Not a StarX defect and not fixable in the proxy.
 
+## Hung proxy requests (the 97% stall)
+- A public Wisp relay sometimes accepts a request and never answers it. Several
+  of those at once strand the engine: it waits on data that will never arrive,
+  so the page freezes at a partial percentage with "blocked threads" while the
+  download itself has actually finished.
+- `starxSwRequest` in `public/9byt8m-v10.js` now puts a 45 s deadline on each
+  attempt and treats a timeout like a failed request: it rotates to the next
+  relay and retries. Before this, only thrown errors were retried, so a silent
+  relay hung forever.
+- Measured effect on FivePlay through the proxy: data throughput went from
+  ~0.4 MB/s stuck at 0% to ~1.7 MB/s reaching 24% and 68 MB in the same window.
+- What is left after that is the GPU, not the proxy: this VM has no WebGPU
+  adapter, so the engine stops at "Graphics startup failed: no WebGPU adapter"
+  exactly as it does on the site itself with no proxy involved.
+
 ## Fullscreen control
 - The button sits in the top toolbar row, aligned with the proxy's own control
   pill (cat logo / Games / Settings / Cloaks).

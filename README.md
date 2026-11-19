@@ -184,6 +184,12 @@ its data. Two things to know.
 page and none leaves your browser. The site does not check whether the ads loaded,
 so the launcher and the game work normally with them gone.
 
+**Large downloads no longer stall.** The game pulls over a gigabyte of data
+through a public relay, and a relay that accepted a request without ever
+answering it used to freeze the load part-way through. StarX now gives each
+request a deadline and retries it on another relay, which roughly quadrupled the
+observed download speed and let the game get past the point it used to hang.
+
 **It needs a real graphics card.** The game renders with WebGPU, a newer browser
 graphics API, and has no older fallback. If your browser cannot provide it you
 will see "Graphics startup failed: no WebGPU adapter". That happens on the site

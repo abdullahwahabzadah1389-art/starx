@@ -534,17 +534,32 @@ async function starxSwRequest(c, args, transfer) {
   var attempts = 3;
   var replayable = !(args.body instanceof ReadableStream);
   var last = null;
+  // A relay that accepts a request and then never answers would otherwise hang
+  // it forever: the engine queues that read, its audio packs never mount, and
+  // the page freezes at a partial percentage while it waits. Give each attempt a
+  // deadline so a silent relay is treated like a failed one and retried on a
+  // different one. Engine data files are large, so the window is generous.
   for (var i = 0; i < attempts; i++) {
+    var timer = null;
     try {
-      return await c.rpc.call("request", args, transfer);
+      var call = c.rpc.call("request", args, transfer);
+      var timeout = new Promise(function (resolve, reject) {
+        timer = setTimeout(function () {
+          var e = new Error("proxy request timed out after 45 s");
+          e.__starxTimeout = true;
+          reject(e);
+        }, 45000);
+      });
+      return await Promise.race([call, timeout]);
     } catch (e) {
       last = e;
       if (!replayable) break;
-      if (!starxSwRetryable(e)) break;
+      if (!starxSwRetryable(e) && !e.__starxTimeout) break;
       if (i === attempts - 1) break;
-      if (i > 0) await starxSwAskFailover();
-      else await starxSwAskFailover();
+      await starxSwAskFailover();
       await new Promise(function (r) { setTimeout(r, 350); });
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
   throw last || new Error("proxy request failed");
