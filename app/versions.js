@@ -9,4 +9,4 @@
 // Both `app/layout.js` (preload) and `app/Loader.js` (script tags) must use it,
 // otherwise the preload points at a different URL than the real request and
 // Chrome logs "preloaded but not used".
-export const ENGINE_V = 'v1.2.0-20261117-natws';
+export const ENGINE_V = 'v1.2.0-20261118-navfs';

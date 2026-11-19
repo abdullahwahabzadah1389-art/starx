@@ -202,86 +202,115 @@ html.vaulted-show-maintenance #vaulted-db-maintenance {
 }
 
 /* ---------- Fullscreen control ----------
- * Floating, bottom-right, above the boot splash and the proxy chrome. The proxy
- * itself renders its browser UI in a closed shadow root, so this cannot live in
- * its toolbar; a shell-level button works whatever the chrome does.
+ * Sits in the top toolbar row, immediately right of the proxy's own control
+ * pill (Games / Settings / Cloaks). The proxy chrome lives in a *closed* shadow
+ * root, so this cannot be injected into its DOM; it is positioned to line up
+ * with that pill instead, which reads as part of the toolbar.
  */
 .starx-fullscreen-btn {
   position: fixed;
-  right: 14px;
-  bottom: 14px;
+  top: var(--starx-fs-top);
+  left: var(--starx-fs-left);
+  transform: translateX(var(--starx-fs-dx));
   z-index: 2147483000;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 14px 9px 12px;
+  gap: 6px;
+  height: 34px;
+  padding: 0 13px 0 11px;
   border-radius: 999px;
-  border: 1px solid #ffffff1f;
-  background: #0c1020d9;
-  color: #dfe6ff;
-  font: 600 13px/1 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 6px 22px #0006;
+  border: 1px solid #ffffff24;
+  background: #0d1224d9;
+  color: #e4eaff;
+  font: 600 12.5px/1 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 16px #0007;
   cursor: pointer;
-  opacity: 0.62;
+  --starx-fs-top: 96px;
+  --starx-fs-left: 50%;
+  --starx-fs-dx: 172px;
   transition:
-    opacity 0.16s ease,
-    transform 0.16s ease,
-    background 0.16s ease;
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
 }
-.starx-fullscreen-btn:hover,
-.starx-fullscreen-btn:focus-visible {
-  opacity: 1;
-  transform: translateY(-1px);
-  background: #141a30e6;
-  outline: none;
+.starx-fullscreen-btn:hover {
+  background: #1a2340e6;
   border-color: #91aaff66;
+  transform: translateX(var(--starx-fs-dx)) translateY(-1px);
 }
 .starx-fullscreen-btn:focus-visible {
+  outline: none;
+  border-color: #91aaff99;
   box-shadow:
     0 0 0 3px #91aaff55,
-    0 6px 22px #0006;
+    0 4px 16px #0007;
 }
 .starx-fullscreen-btn svg {
   flex: none;
+  opacity: 0.9;
 }
 .starx-fullscreen-btn[data-on='1'] {
-  opacity: 0.9;
-  background: #1a2240e6;
+  background: #1b2547e6;
   border-color: #91aaff55;
+  color: #cfdcff;
 }
 
-/* Keep the control unobtrusive on small screens: icon only. */
-@media (max-width: 640px) {
+/* The real control now lives inside the proxy's own toolbar pill (patched into
+ * the engine's nav list, next to Settings). This floating one is only a safety
+ * net for the case where the engine never boots, so it stays hidden. */
+.starx-fullscreen-btn.starx-fullscreen-fallback {
+  display: none;
+}
+
+/* Narrow screens: the proxy pill is centred and smaller, so tuck the button just
+ * under it, and drop the word to keep the toolbar uncluttered. */
+@media (max-width: 720px) {
+  .starx-fullscreen-btn {
+    top: 66px;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 30px;
+    padding: 0 10px;
+  }
+  .starx-fullscreen-btn:hover {
+    transform: translateX(-50%) translateY(-1px);
+  }
   .starx-fullscreen-label {
     display: none;
-  }
-  .starx-fullscreen-btn {
-    padding: 10px;
-    border-radius: 50%;
-    opacity: 0.75;
   }
 }
 
 .starx-fullscreen-note {
   position: fixed;
-  right: 14px;
-  bottom: 62px;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 2147483001;
-  max-width: 280px;
+  max-width: 380px;
   margin: 0;
-  padding: 10px 13px;
-  border-radius: 11px;
-  background: #22162acc;
-  border: 1px solid #ff9d9d40;
-  color: #ffd9d9;
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: #101830f2;
+  border: 1px solid #91aaff40;
+  color: #cfdaf7;
   font-size: 12.5px;
-  line-height: 1.45;
-  box-shadow: 0 8px 24px #0007;
+  line-height: 1.5;
+  box-shadow: 0 10px 28px #0008;
+}
+.starx-fullscreen-note strong {
+  color: #fff;
+  white-space: nowrap;
 }
 
-/* In fullscreen the app is edge to edge, so drop the extra chrome padding. */
-html.starx-fullscreen body {
+/* In real fullscreen the app is edge to edge; in expanded mode (framed and
+ * refused) the same holds inside the frame. */
+html.starx-fullscreen,
+html.starx-expanded {
+  overflow: hidden;
+}
+html.starx-fullscreen body,
+html.starx-expanded body {
   overflow: hidden;
 }

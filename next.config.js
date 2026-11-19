@@ -69,6 +69,29 @@ const nextConfig = {
   async headers() {
     if (STATIC) return [];
     return [
+      // Cross-origin isolation.
+      //
+      // Some browser games (FivePlay's GTA V port is the case that prompted
+      // this) run their engine on Web Workers that talk through
+      // SharedArrayBuffer. Browsers only expose that on a
+      // "cross-origin isolated" page, which requires BOTH of these headers, so
+      // without them such a game stops at "not cross-origin isolated".
+      //
+      // `credentialless` (rather than `require-corp`) means the proxy can still
+      // load ordinary cross-origin assets: they are fetched without cookies
+      // instead of demanding a CORP header from every third party.
+      //
+      // Isolation is per browsing context, and a same-origin frame inherits it,
+      // so every proxied page that StarX loads in its own frame is isolated too.
+      // A page embedded from another origin would not be, which is why the
+      // service worker also reports the state in its log line.
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+          { key: 'Cross-Origin-Embedder-Policy', value: 'credentialless' },
+        ],
+      },
       {
         // Service worker must be served from the origin root with a matching scope.
         source: '/9byt8m-v10.js',

@@ -143,20 +143,46 @@ workspace save limit is 20 MB.
 `npm run build` must pass before deploying. No `server.js` — Vercel cannot host
 persistent WebSockets, so the Wisp relay is always external.
 
+## Cross-origin isolation (needed by some browser games)
+- FivePlay (`fiveplay.lol`, mirrors `v2.` / `v3.`) redirects to
+  `launcher.html` then `game.html`. Both use root-absolute paths (`/b/<hash>/...`)
+  on their own host, so the proxy resolves them once the frame has the right base.
+- `next.config.js` sends `Cross-Origin-Opener-Policy: same-origin` and
+  `Cross-Origin-Embedder-Policy: credentialless` on every route. Without them
+  `SharedArrayBuffer` is undefined, and games whose engine runs on workers that
+  share memory (FivePlay's GTA V port) stop at "not cross-origin isolated".
+- `credentialless` rather than `require-corp`: ordinary cross-origin assets still
+  load (fetched without cookies) instead of needing a CORP header each.
+- Isolation is per browsing context and a **same-origin frame inherits it**. A
+  frame from another origin does not — that is why the static publish build
+  cannot run such a game.
+- The shell auto-reloads **once per session** after the service worker takes
+  control (`sessionStorage['starx-sw-reload']`). The engine only mounts on a
+  controlled page, so a cold first visit used to sit on "connecting…" until the
+  user refreshed by hand. The flag makes a broken-worker reload loop impossible.
+
 ## Fullscreen control
-- A floating **Fullscreen** button lives in the app shell, not in the engine
-  bundle: the proxy renders its own browser chrome inside a *closed* shadow root,
-  so nothing can be injected into its toolbar. The button is rendered by
-  `app/Loader.js` (`.starx-fullscreen-btn`) and styled in `app/globals.css`.
+- The button sits in the top toolbar row, aligned with the proxy's own control
+  pill (cat logo / Games / Settings / Cloaks).
+- That pill is React-rendered by the engine bundle inside a **closed shadow
+  root**, so it cannot be queried or injected into. The shell therefore renders
+  its own button (`app/Loader.js`, `.starx-fullscreen-btn`) and positions it next
+  to the pill with the `--starx-fs-top/left/dx` custom properties in
+  `app/globals.css`. Editing the bundle's nav array to add a real pill entry was
+  attempted twice and is **not** worth it: a duplicated `children:` key silently
+  breaks the 6.3 MB bundle's syntax. The bundle is pristine.
 - It toggles `document.documentElement.requestFullscreen()` /
   `exitFullscreen()`, and **Alt+Shift+F** does the same. The label switches to
-  "Exit fullscreen" and `data-on="1"` is set while active.
+  "Exit" and `data-on="1"` is set while active.
 - `fullscreenchange` is the source of truth (so browser- or Esc-initiated exits
   keep the label correct); state is not guessed from the click.
-- Some embedding contexts refuse fullscreen. The rejection is caught and a short
-  "Fullscreen was blocked here" note appears rather than silently doing nothing.
-- Under 640px the label is hidden and the button becomes a 40px circle, still
-  inside the viewport with no horizontal overflow.
+- Embedded contexts (a Google Sites iframe without `allowfullscreen`) reject the
+  API. It cannot be escaped from inside the frame, so the control falls back to
+  `html.starx-expanded`: StarX fills the frame, and a note explains that true
+  browser fullscreen needs Ctrl+Cmd+F / F11. The button toggles that off too.
+- A `.starx-fullscreen-fallback` copy is hidden by CSS and only exists in case the
+  pill never renders.
+- Under 720px the label is hidden and the button moves under the pill.
 
 ## Layout
 - `app/page.js` + `app/Loader.js` — page shell. Loader registers the service worker,

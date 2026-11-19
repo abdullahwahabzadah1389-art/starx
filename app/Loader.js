@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ENGINE_V } from './versions';
 
@@ -334,7 +334,32 @@ export default function Loader() {
       await resetServiceWorkers();
       if ('serviceWorker' in navigator) {
         try {
-          await navigator.serviceWorker.register(SW_FILE, { updateViaCache: 'none' });
+          const reg = await navigator.serviceWorker.register(SW_FILE, { updateViaCache: 'none' });
+          // The engine only mounts once the worker is *controlling* this page.
+          // A first visit (or a fresh worker) registers after the controller was
+          // decided, so the page loads uncontrolled and sits on "connecting…"
+          // until the user happens to refresh. Wait for the worker to take
+          // control, then reload once — automatically, and only once per
+          // session so a broken worker can never cause a reload loop.
+          if (!navigator.serviceWorker.controller && reg) {
+            await Promise.race([
+              new Promise((resolve) => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })),
+              new Promise((resolve) => setTimeout(resolve, 5000)),
+            ]);
+            if (navigator.serviceWorker.controller) {
+              let reloaded = false;
+              try {
+                reloaded = sessionStorage.getItem('starx-sw-reload') === '1';
+              } catch {}
+              if (!reloaded) {
+                try {
+                  sessionStorage.setItem('starx-sw-reload', '1');
+                } catch {}
+                window.location.reload();
+                return;
+              }
+            }
+          }
         } catch (err) {
           console.error('[sw] registration failed:', err);
           // Browsing through the proxy needs the worker: it is what rewrites
@@ -397,46 +422,78 @@ export default function Loader() {
   // engine bundle, so a button cannot be injected into its toolbar. A floating
   // control in the shell works the same regardless of what the chrome renders,
   // and it can be reached with F11/Shift+F11-free keyboard too (Alt+Shift+F).
-  const [isFull, setIsFull] = useState(false);
   const [showFull, setShowFull] = useState(false);
+  const [mode, setMode] = useState('idle'); // idle | native | expanded
+  // The toggle also lives in the proxy's own toolbar (the Games/Settings pill).
+  // That pill is React rendered inside the engine bundle, so the patched
+  // `kR` nav entry calls this global rather than importing anything.
+  const toggleRef = useRef(null);
 
-  function toggleFullscreen() {
-    const el = document.documentElement;
-    if (document.fullscreenElement) {
-      const p = document.exitFullscreen && document.exitFullscreen();
-      if (p && p.catch) p.catch(() => {});
-      return;
-    }
+  // Fullscreen with a fallback that works inside an embedded frame.
+  //
+  // StarX is often embedded (e.g. a Google Sites page) and that iframe has no
+  // `allowfullscreen` attribute, so the Fullscreen API rejects immediately and
+  // the button appears broken. There is no way to escape the frame from inside
+  // it, so fall back to an "expanded" mode: hide StarX's own chrome and let the
+  // page fill the frame edge to edge, plus tell the user how to get true
+  // browser fullscreen (Ctrl+Cmd+F / F11).
+  function requestNative(el) {
     const req =
       el.requestFullscreen ||
       el.webkitRequestFullscreen ||
       el.mozRequestFullScreen ||
       el.msRequestFullscreen;
-    if (req) {
-      const p = req.call(el, { navigationUI: 'hide' });
-      if (p && p.catch) {
-        p.catch(() => {
-          // Some embedded contexts refuse fullscreen outright; say so instead of
-          // leaving the user wondering why nothing happened.
-          try {
-            setShowFull(true);
-            setTimeout(() => setShowFull(false), 3500);
-          } catch {}
-        });
-      }
-    }
+    if (!req) return Promise.reject(new Error('unsupported'));
+    return Promise.resolve(req.call(el, { navigationUI: 'hide' }));
   }
+
+  function toggleFullscreen() {
+    if (mode === 'expanded') {
+      setMode('idle');
+      document.documentElement.classList.remove('starx-expanded');
+      return;
+    }
+    if (document.fullscreenElement) {
+      const p = document.exitFullscreen && document.exitFullscreen();
+      if (p && p.catch) p.catch(() => {});
+      return;
+    }
+    requestNative(document.documentElement)
+      .catch(() => requestNative(document.body))
+      .then(() => setMode('native'))
+      .catch(() => {
+        // Refused (framed without allowfullscreen): maximised inside the frame.
+        setMode('expanded');
+        document.documentElement.classList.add('starx-expanded');
+        setShowFull(true);
+        setTimeout(() => setShowFull(false), 6000);
+      });
+  }
+
+  // Keep the global the patched toolbar button calls pointing at the live
+  // handler, so state updates (and the expanded fallback) still apply.
+  useEffect(() => {
+    toggleRef.current = toggleFullscreen;
+    window.starxToggleFullscreen = () => toggleRef.current && toggleRef.current();
+    return () => {
+      if (window.starxToggleFullscreen) delete window.starxToggleFullscreen;
+    };
+  });
 
   useEffect(() => {
     const sync = () => {
       const on = Boolean(document.fullscreenElement);
-      setIsFull(on);
+      if (on) setMode('native');
+      else setMode((m) => (m === 'native' ? 'idle' : m));
       document.documentElement.classList.toggle('starx-fullscreen', on);
     };
     const onKey = (e) => {
       if (e.altKey && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
         e.preventDefault();
         toggleFullscreen();
+      } else if (e.key === 'Escape' && mode === 'expanded') {
+        setMode('idle');
+        document.documentElement.classList.remove('starx-expanded');
       }
     };
     document.addEventListener('fullscreenchange', sync);
@@ -446,7 +503,7 @@ export default function Loader() {
       document.removeEventListener('fullscreenchange', sync);
       document.removeEventListener('keydown', onKey);
     };
-  }, []);
+  }, [mode]);
 
   return (
     <>
@@ -502,34 +559,35 @@ export default function Loader() {
 
       <button
         type="button"
-        className="starx-fullscreen-btn"
+        className="starx-fullscreen-btn starx-fullscreen-fallback"
         onClick={toggleFullscreen}
-        aria-label={isFull ? 'Exit fullscreen' : 'Enter fullscreen'}
-        aria-pressed={isFull}
-        title={isFull ? 'Exit fullscreen (Alt+Shift+F)' : 'Fullscreen (Alt+Shift+F)'}
-        data-on={isFull ? '1' : '0'}
+        aria-label={mode === 'expanded' ? 'Exit fullscreen' : 'Enter fullscreen'}
+        aria-pressed={mode !== 'idle'}
+        title={mode !== 'idle' ? 'Exit fullscreen (Alt+Shift+F)' : 'Fullscreen (Alt+Shift+F)'}
+        data-on={mode !== 'idle' ? '1' : '0'}
       >
-        {isFull ? (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {mode !== 'idle' ? (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M9 3H5a2 2 0 0 0-2 2v4" />
             <path d="M15 3h4a2 2 0 0 1 2 2v4" />
             <path d="M9 21H5a2 2 0 0 1-2-2v-4" />
             <path d="M15 21h4a2 2 0 0 0 2-2v-4" />
           </svg>
         ) : (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M3 9V5a2 2 0 0 1 2-2h4" />
             <path d="M21 9V5a2 2 0 0 0-2-2h-4" />
             <path d="M3 15v4a2 2 0 0 0 2 2h4" />
             <path d="M21 15v4a2 2 0 0 1-2 2h-4" />
           </svg>
         )}
-        <span className="starx-fullscreen-label">{isFull ? 'Exit fullscreen' : 'Fullscreen'}</span>
+        <span className="starx-fullscreen-label">{mode !== 'idle' ? 'Exit' : 'Fullscreen'}</span>
       </button>
 
-      {showFull && (
+      {showFull && mode === 'expanded' && (
         <p className="starx-fullscreen-note" role="status">
-          Fullscreen was blocked here — this page is running inside a frame that does not allow it.
+          This page is embedded in a frame, so the browser&apos;s own fullscreen is not available here. StarX is now
+          filling the frame — press <strong>Ctrl+Cmd+F</strong> (Mac) or <strong>F11</strong> for true fullscreen.
         </p>
       )}
     </>

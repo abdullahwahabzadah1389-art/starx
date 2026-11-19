@@ -154,11 +154,25 @@ left alone.
 
 ## Fullscreen
 
-There is a **Fullscreen** button in the bottom-right corner of StarX that makes
-the whole browser fill the screen. Click it again (or press **Alt+Shift+F**, or
-Esc) to leave. On a phone it shrinks to a small icon. If the page is embedded
-somewhere that forbids fullscreen, a short note says so instead of nothing
-happening.
+There is a **Fullscreen** button in the top toolbar, next to the Games and
+Settings icons. It makes the whole browser fill the screen. Click it again (or
+press **Alt+Shift+F**, or Esc) to leave. On a phone it moves under the toolbar
+and drops the label.
+
+If StarX is embedded somewhere that forbids fullscreen (a Google Sites page is
+the usual case) the browser's own fullscreen cannot be used from inside the
+frame. Instead StarX fills the frame edge to edge and a short note tells you to
+press Ctrl+Cmd+F or F11 for true fullscreen. The button still toggles it off.
+
+## Games that need cross-origin isolation
+
+Some browser games run their engine on workers that share memory, which the
+browser only allows on a cross-origin-isolated page. FivePlay's GTA V port is one
+of them. StarX sends the two headers that enable this, so those games start
+instead of stopping at "not cross-origin isolated".
+
+A page can only be isolated when it is loaded from StarX's own domain. The static
+publish build cannot run these games.
 
 ## Notes on sites
 
