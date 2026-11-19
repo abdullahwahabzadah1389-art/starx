@@ -436,12 +436,25 @@ persistent WebSockets, so the Wisp relay is always external.
      one-shot, and a locked stream posted across the transport port throws
      `DataCloneError` and breaks streaming apps (this hit ChatGPT).
   3. The injected DOM guard (above) covers runtime-created tags.
-- **Relay selection is two-tier.** `PRIORITY_WISPS` (`NEXT_PUBLIC_WISP_URL`,
-  `anura.pro`, `wisp.terbiumon.top`, `wisp.mercurywork.shop`) race first with a
+- **Relay selection is two-tier.** Without configuration, `PRIORITY_WISPS`
+  (`anura.pro`, `wisp.terbiumon.top`, `wisp.mercurywork.shop`) race first with a
   2500 ms budget; `FALLBACK_WISPS` (`fern.best`, `lunaar.org`,
   `kristenblackburnvolleyballcamps.com`) only get a 3000 ms race if none of the
   fast hosts answers. Measured boot: ~1123–1215 ms, `anura.pro` answering in
   59 ms, `mercurywork` in 68 ms.
+- **`NEXT_PUBLIC_WISP_URL` now wins outright.** When it is set (comma-separated
+  list allowed), those relays are used on their own and never raced against the
+  public ones — otherwise an empty public relay answering a few ms sooner would
+  steal the connection from the user's own server. A configured relay also gets a
+  longer 6000 ms grace before the public tail is tried, to cover a cold start.
+  It is set per deployment, so Vercel can point at a self-hosted relay while the
+  public list stays as the no-config default.
+- **Workspace preferences** live in `app/Loader.js` (`PREFS_KEY`, key
+  `starx-workspace-prefs`): a tab title, a favicon URL, and a "standalone window"
+  button. The engine bundle rewrites `<title>` when it boots, so the saved title
+  is re-applied with a MutationObserver plus a few timed passes; without that it
+  reverted on every reload. The standalone button opens `/` in a sized popup —
+  it is a window preference, not a disguise.
 - Verified live: `https://discord.com/login` renders the real React app
   (1 email + 1 password input, submit, 2 canvas, 5 QR blocks, 359 stylesheets,
   0 `[integrity]` elements), and a `wss://gateway.discord.gg/?v=10&encoding=json`

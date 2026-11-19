@@ -7,6 +7,7 @@ import { ENGINE_V } from './versions';
 const SW_FILE = '/9byt8m-v10.js';
 const OLD_SW_FILES = ['/9byt8m-v2.js', '/9byt8m-v3.js', '/9byt8m-v4.js', '/9byt8m-v5.js', '/9byt8m-v6.js', '/9byt8m-v7.js', '/9byt8m-v8.js', '/9byt8m-v9.js'];
 const SETTINGS_KEY = '10ednm8';
+const PREFS_KEY = 'starx-workspace-prefs';
 const MAINTENANCE_KEY = 'vaulted-db-maintenance-2026-11';
 
 // Wisp relays are tried in order. Vercel cannot host a persistent WebSocket,
@@ -27,12 +28,27 @@ const FALLBACK_WISPS = [
   'wss://kristenblackburnvolleyballcamps.com/socket/',
 ];
 
-function candidates() {
-  const fromEnv = (process.env.NEXT_PUBLIC_WISP_URL || '')
+// Relays configured with NEXT_PUBLIC_WISP_URL. These are the user's own, so
+// they get to stand alone: they are never raced against the public relays.
+function configuredWisps() {
+  return (process.env.NEXT_PUBLIC_WISP_URL || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  const priority = [...fromEnv, ...PRIORITY_WISPS];
+}
+
+function candidates() {
+  const own = configuredWisps();
+  // A self-hosted relay wins outright. Relying on a private server is the point
+  // of setting it, and racing it against public ones would hand the connection
+  // back to them whenever an empty relay answers the probe a few ms sooner.
+  if (own.length) {
+    return {
+      priority: [...new Set(own)],
+      all: [...new Set([...own, ...FALLBACK_WISPS])],
+    };
+  }
+  const priority = [...PRIORITY_WISPS];
   const rest = FALLBACK_WISPS.filter((u) => !priority.includes(u));
   return {
     priority: [...new Set(priority)],
@@ -123,7 +139,11 @@ async function pickWisp(priorityBudget = 2500, fallbackBudget = 3000) {
   const { priority, all } = candidates();
   if (!all.length) return DEFAULT_WISP;
 
-  const fast = await raceWisp(priority, priorityBudget);
+  // A configured relay is the user's own server, so give it a longer grace
+  // period before falling back to a public one (a self-hosted worker may sit
+  // behind a cold start).
+  const own = configuredWisps();
+  const fast = await raceWisp(priority, own.length ? 6000 : priorityBudget);
   if (fast) return fast;
 
   const rest = all.filter((u) => !priority.includes(u));
@@ -505,6 +525,93 @@ export default function Loader() {
     };
   }, [mode]);
 
+  // --- Workspace preferences -------------------------------------------------
+  // Users can rename the tab and pick their own favicon, and open a clean
+  // standalone window with no StarX chrome around the page. Stored per browser.
+  const [prefs, setPrefs] = useState({ title: '', icon: '' });
+  const [showPrefs, setShowPrefs] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
+      setPrefs({ title: String(saved.title || ''), icon: String(saved.icon || '') });
+    } catch {}
+  }, []);
+
+  // Apply the saved title/icon to the shell document as soon as they change.
+  // Kept in a ref too, so the standalone window can reuse them without waiting
+  // for a re-render.
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (prefs.title) document.title = prefs.title;
+    if (!prefs.icon) return;
+    let link = document.querySelector('link[rel="icon"][data-starx-user-icon]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      link.dataset.starxUserIcon = '1';
+      document.head.appendChild(link);
+    }
+    link.href = prefs.icon;
+  }, [prefs]);
+
+  // The engine bundle sets the tab title and favicon itself once it boots, so a
+  // saved preference would be overwritten on every load. Keep the user's choice
+  // winning: re-apply it whenever <title> changes, until they reset it.
+  useEffect(() => {
+    if (!prefs.title || typeof document === 'undefined') return;
+    const want = prefs.title;
+    const enforce = () => {
+      if (document.title !== want) document.title = want;
+    };
+    const titleEl = document.querySelector('title');
+    let observer = null;
+    if (titleEl && typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(enforce);
+      observer.observe(titleEl, { childList: true, characterData: true, subtree: true });
+    }
+    // A few timed re-applies cover the boot sequence, which replaces the title
+    // element before the observer can see it.
+    const timers = [400, 1200, 2500, 4000, 6000].map((ms) => setTimeout(enforce, ms));
+    return () => {
+      if (observer) observer.disconnect();
+      timers.forEach(clearTimeout);
+    };
+  }, [prefs.title]);
+
+  function savePrefs(next) {
+    const merged = { ...prefsRef.current, ...next };
+    setPrefs(merged);
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(merged));
+    } catch {}
+  }
+
+  // Open the proxy in its own window: a sized popup of the shell, so the page
+  // gets a whole window instead of a tab inside a crowded browser.
+  function openStandalone() {
+    try {
+      const w = window.open('/', 'starx_standalone', 'popup=yes,width=1280,height=840');
+      if (!w) return false;
+      w.focus();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  useEffect(() => {
+    if (!showPrefs) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setShowPrefs(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showPrefs]);
+
   return (
     <>
       <main id="_jig29al">
@@ -583,6 +690,73 @@ export default function Loader() {
         )}
         <span className="starx-fullscreen-label">{mode !== 'idle' ? 'Exit' : 'Fullscreen'}</span>
       </button>
+
+      <button
+        type="button"
+        className="starx-prefs-btn"
+        onClick={() => setShowPrefs((v) => !v)}
+        aria-label="Workspace preferences"
+        aria-pressed={showPrefs}
+        title="Workspace preferences"
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+        <span className="starx-fullscreen-label">Prefs</span>
+      </button>
+
+      {showPrefs && (
+        <section className="starx-prefs" role="dialog" aria-modal="false" aria-label="Workspace preferences">
+          <header>
+            <h2>Workspace</h2>
+            <button type="button" className="starx-prefs-close" aria-label="Close" onClick={() => setShowPrefs(false)}>
+              ×
+            </button>
+          </header>
+
+          <label>
+            Tab title
+            <input
+              type="text"
+              value={prefs.title}
+              maxLength={80}
+              placeholder="StarX — by Sm0ke"
+              onChange={(e) => savePrefs({ title: e.target.value })}
+            />
+          </label>
+
+          <label>
+            Tab icon URL
+            <input
+              type="url"
+              value={prefs.icon}
+              maxLength={500}
+              placeholder="/starx-logo.png"
+              onChange={(e) => savePrefs({ icon: e.target.value })}
+            />
+          </label>
+
+          <div className="starx-prefs-row">
+            <button
+              type="button"
+              className="starx-prefs-action"
+              onClick={() => {
+                savePrefs({ title: '', icon: '' });
+                document.title = 'StarX — by Sm0ke';
+                document.querySelectorAll('link[rel="icon"][data-starx-user-icon]').forEach((l) => l.remove());
+              }}
+            >
+              Reset
+            </button>
+            <button type="button" className="starx-prefs-action" onClick={openStandalone}>
+              Open standalone window
+            </button>
+          </div>
+
+          <p className="starx-prefs-note">Saved in this browser. The standalone window removes the tab strip around StarX.</p>
+        </section>
+      )}
 
       {showFull && mode === 'expanded' && (
         <p className="starx-fullscreen-note" role="status">
