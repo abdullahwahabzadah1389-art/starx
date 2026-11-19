@@ -174,6 +174,23 @@ instead of stopping at "not cross-origin isolated".
 A page can only be isolated when it is loaded from StarX's own domain. The static
 publish build cannot run these games.
 
+## FivePlay (fiveplay.lol)
+
+The GTA V browser port runs in the proxy: its launcher loads and the game streams
+its data. Two things to know.
+
+**Ads are blocked.** FivePlay loads its ad scripts from a few well-known networks
+(Monetag and similar). StarX refuses those requests locally, so no ad reaches the
+page and none leaves your browser. The site does not check whether the ads loaded,
+so the launcher and the game work normally with them gone.
+
+**It needs a real graphics card.** The game renders with WebGPU, a newer browser
+graphics API, and has no older fallback. If your browser cannot provide it you
+will see "Graphics startup failed: no WebGPU adapter". That happens on the site
+itself too, so it is not something the proxy causes. Use a current Chrome or Edge
+on a machine with a working GPU; it will not run on a very old computer or one
+with graphics disabled.
+
 ## Notes on sites
 
 TikTok, Gemini, Discord, Twitch, Google, GitHub, Wikipedia, YouTube, Instagram,

@@ -161,6 +161,31 @@ persistent WebSockets, so the Wisp relay is always external.
   controlled page, so a cold first visit used to sit on "connecting…" until the
   user refreshed by hand. The flag makes a broken-worker reload loop impossible.
 
+## Ad blocking and FivePlay
+- `public/9byt8m-v10.js` short-circuits known ad/telemetry hosts to a local `204`
+  (`STARX_BLOCK_HOSTS` / `STARX_BLOCK_RE`), so the request never leaves the
+  browser. It matches on the decoded target host, three path segments back.
+- FivePlay's networks are on the list: `quge5.com`, `alwingulla.com`,
+  `rtmark.net`, `html-load.cc`, `monetag.com`, `profuses.com`. They wrap the
+  launcher in `tag.min.js` zone scripts and interstitials, but the site never
+  checks whether they loaded, so blocking them leaves the launcher and game
+  working. Verified: 3-6 ad requests answered with `204`, none reaching the
+  network, launcher still renders "Launch GTA V".
+- Do **not** assume that holds for every site: CloudMoon gates streaming on its
+  ad network, which is why `STARX_ADBLOCK_EXEMPT` exists. Check for an ad-gate
+  before adding a host to the block list.
+
+## FivePlay's graphics requirement
+- The GTA V port needs **WebGPU** (`navigator.gpu` + `requestAdapter`). Its
+  `wgpu_worker.js` has no WebGL fallback, so without an adapter it stops at
+  "Graphics startup failed: no WebGPU adapter" and then a thread rejection.
+- This was confirmed by loading the game **directly from its own origin**, with
+  no proxy involved. The VM's Chromium has no `navigator.gpu` at all (headless,
+  headed under Xvfb, and every SwiftShader/Vulkan flag combination), so gameplay
+  cannot be verified here — only up to data streaming.
+- Needs Chrome/Edge 113+ with a real GPU (or a machine where WebGPU is enabled).
+  Not a StarX defect and not fixable in the proxy.
+
 ## Fullscreen control
 - The button sits in the top toolbar row, aligned with the proxy's own control
   pill (cat logo / Games / Settings / Cloaks).

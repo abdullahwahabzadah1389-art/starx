@@ -13,9 +13,15 @@ var STARX_BLOCK_HOSTS=[
  "scorecardresearch.com","quantserve.com","criteo.com","criteo.net","taboola.com",
  "outbrain.com","moatads.com","adsrvr.org","rubiconproject.com","pubmatic.com",
  "adnxs.com","casalemedia.com","smartadserver.com","yieldmo.com","3lift.com",
- "amazon-adsystem.com","adroll.com","clarity.ms","bat.bing.com","connect.facebook.net"
+ "amazon-adsystem.com","adroll.com","clarity.ms","bat.bing.com","connect.facebook.net",
+// Monetag / Adsterra-style networks. FivePlay (fiveplay.lol) wraps its launcher
+// in these: two `tag.min.js` zone scripts, a Monetag verification meta tag, and
+// the html-load.cc "session"/reach pages that serve the interstitial. The site
+// does not check whether they loaded, so refusing them leaves the launcher and
+// the game itself untouched.
+ "quge5.com","alwingulla.com","rtmark.net","html-load.cc","monetag.com","profuses.com"
 ];
-var STARX_BLOCK_RE=/(^|\.)(doubleclick\.net|googlesyndication\.com|google-analytics\.com|googletagmanager\.com|googleadservices\.com|adservice\.google\.com|hotjar\.com|hotjar\.io|sentry\.io|sentry-cdn\.com|scorecardresearch\.com|quantserve\.com|criteo\.(com|net)|taboola\.com|outbrain\.com|moatads\.com|adsrvr\.org|rubiconproject\.com|pubmatic\.com|adnxs\.com|casalemedia\.com|smartadserver\.com|yieldmo\.com|3lift\.com|amazon-adsystem\.com|adroll\.com|mcs\.tiktokv\.us|mcs-[a-z]+\.tiktokv\.us|mon\.tiktokv\.(com|us)|log\.tiktokv\.com|analytics\.tiktok\.com|bat\.bing\.com|connect\.facebook\.net)$/i;
+var STARX_BLOCK_RE=/(^|\.)(doubleclick\.net|googlesyndication\.com|google-analytics\.com|googletagmanager\.com|googleadservices\.com|adservice\.google\.com|hotjar\.com|hotjar\.io|sentry\.io|sentry-cdn\.com|scorecardresearch\.com|quantserve\.com|criteo\.(com|net)|taboola\.com|outbrain\.com|moatads\.com|adsrvr\.org|rubiconproject\.com|pubmatic\.com|adnxs\.com|casalemedia\.com|smartadserver\.com|yieldmo\.com|3lift\.com|amazon-adsystem\.com|adroll\.com|mcs\.tiktokv\.us|mcs-[a-z]+\.tiktokv\.us|mon\.tiktokv\.(com|us)|log\.tiktokv\.com|analytics\.tiktok\.com|bat\.bing\.com|connect\.facebook\.net|quge5\.com|alwingulla\.com|rtmark\.net|html-load\.cc|monetag\.com|profuses\.com)$/i;
 function starxTargetUrl(url){
   try{
     var u=new URL(url);
