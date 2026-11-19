@@ -50,6 +50,9 @@ Then set `NEXT_PUBLIC_WISP_URL=wss://<your-worker>.workers.dev/` and StarX uses
 your relay instead of the public ones. Visiting the worker URL in a browser shows
 a short setup page; the WebSocket is what actually carries traffic.
 
+Keep the **trailing slash** on the URL — the Wisp client rejects endpoints that
+lack it.
+
 Two Worker limits are worth knowing: it can only open outbound **TCP** sockets,
 so Wisp's UDP streams are refused, and only six connections may be connecting at
 once (the relay queues the rest for you). Set an optional `WISP_TOKEN` variable

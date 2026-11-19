@@ -166,11 +166,28 @@ persistent WebSockets, so the Wisp relay is always external.
   `*.lan`, `*.home.arpa`, and anything not shaped like a DNS name → close `0x48`.
 - Optional `WISP_TOKEN` var gates the relay (`?token=`, `Authorization: Bearer`,
   or `Sec-WebSocket-Protocol: wisp.token.<t>`). Unset means an open relay.
-- Verified with a local harness (`tmp/` during development, since removed):
-  43/43 protocol checks incl. echo, binary integrity, backpressure, all close
-  reasons, host blocking, garbage frames; StarX's real `probe()` accepts it;
-  an 8 MiB download through the framing was byte-identical (~125 MiB/s); and a
-  live `GET http://example.com/` returned `HTTP/1.1 200` through the worker.
+- Connect with `{ allowHalfOpen: true }` and close the writable side with
+  `writer.close()`, not `abort()`. Workers otherwise auto-close the writable
+  side on the origin's FIN, so a request body still queued would fail to write.
+  `closeStream(..., graceful)` flushes the client's pending queue (bounded 3 s)
+  before closing — an early HTTP reply used to truncate a POST body. Verified:
+  a 20 KB pipelined POST arrives complete.
+- `socket.close()` returns a promise; it must be `.catch()`-ed or every teardown
+  logs an unhandled rejection.
+- **The URL must end in `/`.** The official Wisp client in
+  `@mercuryworkshop/libcurl-transport` throws on `wisp endpoints must end with a
+  trailing forward slash`, and it takes `max_buffer_size` from the stream-0
+  CONTINUE before any stream works, so that first packet is load-bearing.
+- Verified two ways (harnesses in `tmp/` during development, since removed):
+  1. A hand-rolled suite of 42 checks — echo, 4 KiB binary integrity, a 64-packet
+     burst with backpressure, every close reason, 16 blocked destinations,
+     garbage frames, id reuse, nine concurrent CONNECTs, all token forms,
+     subprotocol echo, and the 20 KB POST truncation case.
+  2. **The real client**, extracted from the libcurl transport bundle and run
+     against `worker.js`: connects with `max_buffer_size=16`, HTTP GET returns
+     `200` + body, a 256 KiB upload round-trips through its `send_buffer` and
+     CONTINUE handling, refused → `0x42`, blocked → `0x48`, and a live
+     `example.com` request returns `200` with the real page.
 - Deliberately **not** implemented: filter/DPI evasion, scanner resistance, or
   impersonating Google to hide the session. Those defeat network controls that
   belong to someone else, and were declined.

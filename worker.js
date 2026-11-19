@@ -232,24 +232,63 @@ function createSession(ws, send) {
     }
   }
 
-  function closeStream(stream, reason, notifyClient) {
+  /**
+   * Tear a stream down.
+   *
+   * `graceful` matters: when the origin has finished sending but the client
+   * still has queued bytes on their way to it (an HTTP POST answered early, or
+   * a FIN that races the last DATA packet), aborting the writer would silently
+   * truncate the request. A graceful close flushes that queue first.
+   */
+  function closeStream(stream, reason, notifyClient, graceful) {
     if (stream.closed) return;
     stream.closed = true;
     streams.delete(stream.id);
 
-    // Stop both directions. cancel()/abort() are preferred to close() because
-    // the client asked for an immediate reset.
+    // Stop reading from the origin immediately either way.
     try {
-      stream.reader && stream.reader.cancel().catch(() => {});
-    } catch {}
-    try {
-      stream.writer && stream.writer.abort && stream.writer.abort().catch(() => {});
-    } catch {}
-    try {
-      stream.socket && stream.socket.close();
+      if (stream.reader) stream.reader.cancel().catch(() => {});
     } catch {}
 
-    if (notifyClient) emit(closePacket(stream.id, reason));
+    const finish = () => {
+      try {
+        if (stream.writer) {
+          // close() flushes buffered chunks; abort() discards them.
+          const done = graceful ? stream.writer.close() : stream.writer.abort();
+          if (done && typeof done.catch === 'function') done.catch(() => {});
+        }
+      } catch {}
+      try {
+        // socket.close() returns a promise; an unhandled rejection here would
+        // surface as a runtime error on every teardown.
+        const p = stream.socket && stream.socket.close();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch {}
+      if (notifyClient) emit(closePacket(stream.id, reason));
+    };
+
+    // Drain whatever the client already sent before closing the writable side.
+    // `stream.closed` is set, so this has to be its own loop rather than the
+    // normal drain path. Bounded, because a wedged peer must not block teardown.
+    if (graceful && stream.queue.length) {
+      let writer = stream.writer;
+      const deadline = Date.now() + 3000;
+      const pump = async () => {
+        try {
+          if (!writer && stream.socket) writer = stream.socket.writable.getWriter();
+          while (stream.queue.length && writer && Date.now() <= deadline) {
+            await writer.write(stream.queue.shift());
+          }
+        } catch {
+          /* the socket is going away anyway */
+        }
+        stream.writer = writer;
+        finish();
+      };
+      pump();
+      return;
+    }
+    finish();
   }
 
   /** Pump bytes from the origin socket back to the client as DATA packets. */
@@ -270,10 +309,10 @@ function createSession(ws, send) {
         if (stream.closed || !value || value.byteLength === 0) continue;
         emit(makePacket(TYPE_DATA, stream.id, value));
       }
-      // Origin finished sending: tell the client so it can close its side.
+      // Origin finished sending. Flush anything the client queued before telling
+      // it the stream is done, so a request body is never truncated.
       if (!stream.closed) {
-        emit(closePacket(stream.id, CLOSE_VOLUNTARY));
-        closeStream(stream, CLOSE_VOLUNTARY, false);
+        closeStream(stream, CLOSE_VOLUNTARY, true, true);
       }
     } catch {
       closeStream(stream, CLOSE_NETWORK, true);
@@ -385,7 +424,12 @@ function createSession(ws, send) {
 
       let socket;
       try {
-        socket = connect({ hostname: target, port });
+        // `allowHalfOpen` keeps the writable side open when the origin sends
+        // EOF. Without it the writable side auto-closes on the origin's FIN, so
+        // a request body still in flight would fail to write — the exact race
+        // the graceful close above exists to fix. Wisp streams are independent
+        // directions, so half-open is the correct default here.
+        socket = connect({ hostname: target, port }, { allowHalfOpen: true });
       } catch {
         emit(closePacket(streamId, CLOSE_HOST_UNREACHABLE));
         closeStream(stream, CLOSE_HOST_UNREACHABLE, false);
@@ -533,6 +577,7 @@ function health(request, url) {
     '',
     '  NEXT_PUBLIC_WISP_URL=wss://' + url.host + '/',
     '',
+    'Keep the trailing slash: the Wisp client rejects URLs that lack it.',
     'GET requests get this page; WebSocket upgrades become proxy streams.',
   ].join('\n');
 
