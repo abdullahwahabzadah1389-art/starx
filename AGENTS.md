@@ -143,6 +143,38 @@ workspace save limit is 20 MB.
 `npm run build` must pass before deploying. No `server.js` — Vercel cannot host
 persistent WebSockets, so the Wisp relay is always external.
 
+## Self-hosted Wisp relay (`worker.js`)
+- `worker.js` at the repo root is a **standalone Cloudflare Worker** (paste into
+  the dashboard, `export default { fetch }`, only import is
+  `cloudflare:sockets`). It is not part of the Next build and Vercel ignores it.
+- Implements Wisp v1.2 byte-for-byte: `uint8` type + `uint32 LE` streamId +
+  payload; CONNECT `uint8 type | uint16 LE port | hostname`, DATA raw,
+  CONTINUE `uint32 LE` window, CLOSE `uint8` reason.
+- The first frame is always CONTINUE on **stream 0** with the buffer size —
+  StarX's `probe()` in `app/Loader.js` accepts a relay only if the first byte is
+  `0x03`. A CONNECT arriving with streamId 0 (StarX's INFO probe) is answered
+  with the same CONTINUE and never opens a socket.
+- Point StarX at it with `NEXT_PUBLIC_WISP_URL=wss://<worker>/`. Any path works.
+- **UDP is refused** (`0x41`): the Workers runtime's `connect()` is TCP-only, and
+  Wisp requires UDP support, so a UDP client gets an explicit close instead of a
+  stream that silently never carries data.
+- **Only six handshakes may be in flight at once** per Worker invocation, so
+  CONNECTs go through a FIFO semaphore (`MAX_PENDING_CONNECTS`). Without it a
+  burst queues inside the runtime and our own 20 s timeout can fire first.
+- Blocked destinations: loopback, RFC1918, CGNAT, link-local/metadata
+  (`169.254.169.254`), multicast, IPv6 ULA/link-local, `*.local`, `*.internal`,
+  `*.lan`, `*.home.arpa`, and anything not shaped like a DNS name → close `0x48`.
+- Optional `WISP_TOKEN` var gates the relay (`?token=`, `Authorization: Bearer`,
+  or `Sec-WebSocket-Protocol: wisp.token.<t>`). Unset means an open relay.
+- Verified with a local harness (`tmp/` during development, since removed):
+  43/43 protocol checks incl. echo, binary integrity, backpressure, all close
+  reasons, host blocking, garbage frames; StarX's real `probe()` accepts it;
+  an 8 MiB download through the framing was byte-identical (~125 MiB/s); and a
+  live `GET http://example.com/` returned `HTTP/1.1 200` through the worker.
+- Deliberately **not** implemented: filter/DPI evasion, scanner resistance, or
+  impersonating Google to hide the session. Those defeat network controls that
+  belong to someone else, and were declined.
+
 ## Cross-origin isolation (needed by some browser games)
 - FivePlay (`fiveplay.lol`, mirrors `v2.` / `v3.`) redirects to
   `launcher.html` then `game.html`. Both use root-absolute paths (`/b/<hash>/...`)

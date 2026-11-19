@@ -42,6 +42,19 @@ Next versions with known vulnerabilities (15.5.4 was rejected). `npm audit` is c
 There is **no `server.js`** and no local `/wisp/` endpoint. Vercel cannot host a
 persistent WebSocket, so the app always talks to an external Wisp relay.
 
+### Running your own relay (optional)
+
+`worker.js` in the repo root is a ready-made Wisp relay for Cloudflare Workers.
+Open Workers & Pages → create a worker → Edit code, paste the whole file, Deploy.
+Then set `NEXT_PUBLIC_WISP_URL=wss://<your-worker>.workers.dev/` and StarX uses
+your relay instead of the public ones. Visiting the worker URL in a browser shows
+a short setup page; the WebSocket is what actually carries traffic.
+
+Two Worker limits are worth knowing: it can only open outbound **TCP** sockets,
+so Wisp's UDP streams are refused, and only six connections may be connecting at
+once (the relay queues the rest for you). Set an optional `WISP_TOKEN` variable
+if you want to require a token on the WebSocket URL.
+
 ### Custom domain
 
 The domain must point at a host that **allows service workers** — the worker is what
